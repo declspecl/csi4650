@@ -1,3 +1,5 @@
+#include "game.hpp"
+
 #include <omp.h>
 #include <iostream>
 
@@ -8,6 +10,8 @@ int main(int argc, char* argv[]) {
 #else
     std::cout << "OpenMP NOT enabled\n";
 #endif
+
+    Game game;
 
     return 0;
 }

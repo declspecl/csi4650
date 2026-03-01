@@ -13,7 +13,7 @@ private:
     static constexpr uint8_t HIT_UNTIL_VALUE = 21;
 
 public:
-    Decision get_decision(const Hand& hand) const noexcept override;
+    Decision get_decision(const GameContext& context) const noexcept override;
 };
 
 #endif

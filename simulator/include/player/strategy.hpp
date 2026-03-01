@@ -2,6 +2,7 @@
 #define PLAYER_STRATEGY_HPP
 
 #include "hand.hpp"
+#include <cstdint>
 
 enum class Decision : uint8_t {
     HIT,
@@ -11,13 +12,24 @@ enum class Decision : uint8_t {
     SURRENDER,
 };
 
+struct GameContext {
+    const Hand& own_hand;
+    const Card& dealer_upcard;
+
+    constexpr GameContext(
+        const Hand& own,
+        const Card& upcard
+    ) noexcept
+        : own_hand(own)
+        , dealer_upcard(upcard)
+    {}
+};
+
 class PlayerStrategy {
 public:
     virtual ~PlayerStrategy() = default;
 
-    virtual Decision get_decision(const Hand& hand) const noexcept = 0;
-    // TODO: add method to get decision, with dealer upcard as context
-    // TODO: add method to get decision, with ALL public context (dealer upcard, other players' upcards, etc.)
+    virtual Decision get_decision(const GameContext& context) const noexcept = 0;
 };
 
 #endif

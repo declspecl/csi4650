@@ -56,3 +56,33 @@ target_link_libraries(
     blackjack_simulator
     PRIVATE OpenMP::OpenMP_CXX
 )
+
+include(FetchContent)
+FetchContent_Declare(
+    googletest
+    GIT_REPOSITORY https://github.com/google/googletest.git
+    GIT_TAG v1.17.0
+)
+
+FetchContent_MakeAvailable(googletest)
+
+file(
+    GLOB_RECURSE TEST_SOURCES CONFIGURE_DEPENDS
+    ${CMAKE_CURRENT_SOURCE_DIR}/test/*.cpp
+)
+
+add_executable(
+    test_runner
+    ${TEST_SOURCES}
+    ${PROJECT_HEADERS}
+)
+
+target_include_directories(
+    test_runner
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+target_link_libraries(
+    test_runner
+    PRIVATE GTest::gtest_main pthread
+)

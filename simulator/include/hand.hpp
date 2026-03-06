@@ -22,7 +22,7 @@ private:
     std::array<Card, MAX_HAND_SIZE> cards;
     uint8_t cards_in_hand;
     uint32_t bet_cents;
-    HandState state;
+    HandOrigin origin;
 
 public:
     constexpr Hand() noexcept;
@@ -35,8 +35,8 @@ public:
     constexpr void set_bet(uint32_t bet) noexcept;
     constexpr uint32_t get_bet() const noexcept;
 
-    constexpr void set_state(HandState new_state) noexcept;
-    constexpr HandState get_state() const noexcept;
+    constexpr void set_origin(HandOrigin new_origin) noexcept;
+    constexpr HandOrigin get_origin() const noexcept;
 
     constexpr bool is_blackjack() const noexcept;
     constexpr bool is_bust() const noexcept;
@@ -49,7 +49,7 @@ constexpr Hand::Hand() noexcept
     : cards()
     , cards_in_hand(0)
     , bet_cents(0)
-    , state(HandState::PENDING)
+    , origin(HandOrigin::NATURAL)
 {}
 
 constexpr void Hand::add_card(const Card& card) noexcept {
@@ -80,7 +80,7 @@ constexpr uint8_t Hand::get_value() const noexcept {
 constexpr void Hand::clear() noexcept {
     this->cards_in_hand = 0;
     this->bet_cents = 0;
-    this->state = HandState::PENDING;
+    this->origin = HandOrigin::NATURAL;
 }
 
 constexpr void Hand::set_bet(uint32_t bet) noexcept {
@@ -91,12 +91,12 @@ constexpr uint32_t Hand::get_bet() const noexcept {
     return this->bet_cents;
 }
 
-constexpr void Hand::set_state(HandState new_state) noexcept {
-    this->state = new_state;
+constexpr void Hand::set_origin(HandOrigin new_origin) noexcept {
+    this->origin = new_origin;
 }
 
-constexpr HandState Hand::get_state() const noexcept {
-    return this->state;
+constexpr HandOrigin Hand::get_origin() const noexcept {
+    return this->origin;
 }
 
 constexpr bool Hand::is_blackjack() const noexcept {

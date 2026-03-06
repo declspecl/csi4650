@@ -95,7 +95,7 @@ TEST(SplitHandTest, SplitHandWith21IsNotBlackjack) {
     EXPECT_TRUE(player_hand.is_blackjack());
 
     // Mark hand as SPLIT (simulating it came from a split)
-    player_hand.set_state(HandState::SPLIT);
+    player_hand.set_origin(HandOrigin::SPLIT);
 
     // Determine outcome - should be REGULAR_WIN not BLACKJACK_WIN
     HandOutcome outcome = game.determine_outcome(player_hand, dealer_hand);
@@ -110,7 +110,7 @@ TEST(SplitHandTest, SplitHandWith21Pays1to1) {
     Hand player_hand;
     player_hand.add_card(Card(Suit::SPADES, Rank::ACE));
     player_hand.add_card(Card(Suit::HEARTS, Rank::QUEEN));
-    player_hand.set_state(HandState::SPLIT);
+    player_hand.set_origin(HandOrigin::SPLIT);
 
     // Create a dealer hand with 19
     Hand dealer_hand;
@@ -134,7 +134,7 @@ TEST(SplitHandTest, NormalBlackjackStillPays3to2) {
     Hand player_hand;
     player_hand.add_card(Card(Suit::SPADES, Rank::ACE));
     player_hand.add_card(Card(Suit::HEARTS, Rank::KING));
-    // Don't set SPLIT - hand is still PENDING
+    // Don't set SPLIT - hand is still NATURAL
 
     // Create a dealer hand with 19
     Hand dealer_hand;
@@ -159,7 +159,7 @@ TEST(SplitHandTest, SplitHandCanBust) {
     player_hand.add_card(Card(Suit::SPADES, Rank::KING));
     player_hand.add_card(Card(Suit::HEARTS, Rank::QUEEN));
     player_hand.add_card(Card(Suit::DIAMONDS, Rank::FIVE));
-    player_hand.set_state(HandState::SPLIT);
+    player_hand.set_origin(HandOrigin::SPLIT);
 
     Hand dealer_hand;
     dealer_hand.add_card(Card(Suit::CLUBS, Rank::KING));

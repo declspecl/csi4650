@@ -3,8 +3,8 @@
 
 #include <cstdint>
 
-enum class HandState : uint8_t {
-    PENDING = 0,
+enum class HandOrigin : uint8_t {
+    NATURAL = 0,
     SPLIT,
 };
 

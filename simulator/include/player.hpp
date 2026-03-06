@@ -41,7 +41,11 @@ public:
 
     constexpr bool place_bet(uint32_t bet_amount, const BettingConfig& config) noexcept;
 
-    constexpr Hand& get_hand(uint8_t index) noexcept;
+    constexpr void clear_hand(uint8_t index) noexcept;
+    constexpr void add_card_to_hand(uint8_t index, const Card& card) noexcept;
+    constexpr void set_hand_bet(uint8_t index, uint32_t bet) noexcept;
+
+    constexpr const Hand& get_hand(uint8_t index) const noexcept;
     constexpr uint8_t get_active_hand_count() const noexcept;
     constexpr void set_active_hand_count(uint8_t count) noexcept;
 };
@@ -101,7 +105,22 @@ constexpr bool Player::place_bet(uint32_t bet_amount, const BettingConfig& confi
     return true;
 }
 
-constexpr Hand& Player::get_hand(uint8_t index) noexcept {
+constexpr void Player::clear_hand(uint8_t index) noexcept {
+    assert(index < MAX_POSSIBLE_HANDS);
+    this->hands[index].clear();
+}
+
+constexpr void Player::add_card_to_hand(uint8_t index, const Card& card) noexcept {
+    assert(index < MAX_POSSIBLE_HANDS);
+    this->hands[index].add_card(card);
+}
+
+constexpr void Player::set_hand_bet(uint8_t index, uint32_t bet) noexcept {
+    assert(index < MAX_POSSIBLE_HANDS);
+    this->hands[index].set_bet(bet);
+}
+
+constexpr const Hand& Player::get_hand(uint8_t index) const noexcept {
     assert(index < MAX_POSSIBLE_HANDS);
     return this->hands[index];
 }

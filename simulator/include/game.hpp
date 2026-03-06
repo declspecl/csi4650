@@ -20,7 +20,8 @@ private:
     Player dealer;
     uint8_t player_count;
     BettingConfig betting_config;
-    GameStatistics game_stats;
+    uint64_t hands_played_count;
+    uint32_t starting_bankroll_total;
 
 public:
     constexpr Game() noexcept;
@@ -48,7 +49,8 @@ constexpr Game::Game() noexcept
     , dealer(Player())
     , player_count(MAX_NON_DEALER_PLAYERS)
     , betting_config(BettingConfig())
-    , game_stats()
+    , hands_played_count(0)
+    , starting_bankroll_total(0)
 {}
 
 constexpr Game::Game(const BettingConfig& config) noexcept
@@ -57,24 +59,24 @@ constexpr Game::Game(const BettingConfig& config) noexcept
     , dealer(Player())
     , player_count(MAX_NON_DEALER_PLAYERS)
     , betting_config(config)
-    , game_stats()
+    , hands_played_count(0)
+    , starting_bankroll_total(0)
 {}
 
 constexpr void Game::initialize_round() noexcept {
-    game_stats = GameStatistics();
+    hands_played_count = 0;
+    starting_bankroll_total = 0;
 
-    uint64_t total_starting = 0;
     for (uint8_t i = 0; i < player_count; i++) {
-        players[i].initialize_bankroll(betting_config.initial_bankroll_cents);
-        total_starting += betting_config.initial_bankroll_cents;
+        players[i].initialize_bankroll(betting_config.get_initial_bankroll());
+        starting_bankroll_total += betting_config.get_initial_bankroll();
     }
-    game_stats.set_starting_bankroll(static_cast<uint32_t>(total_starting));
 
-    dealer.get_hand(0).clear();
+    dealer.clear_hand(0);
 }
 
 constexpr HandOutcome Game::determine_outcome(const Hand& player_hand, const Hand& dealer_hand) const noexcept {
-    bool was_split = (player_hand.get_state() == HandState::SPLIT);
+    bool was_split = (player_hand.get_origin() == HandOrigin::SPLIT);
 
     if (player_hand.is_bust()) {
         return HandOutcome::PLAYER_BUST_LOSS;
@@ -107,7 +109,7 @@ constexpr HandOutcome Game::determine_outcome(const Hand& player_hand, const Han
 }
 
 constexpr void Game::resolve_hand(Player& player, uint8_t hand_index) noexcept {
-    Hand& player_hand = player.get_hand(hand_index);
+    const Hand& player_hand = player.get_hand(hand_index);
     const Hand& dealer_hand = dealer.get_hand(0);
 
     HandOutcome outcome = determine_outcome(player_hand, dealer_hand);
@@ -117,7 +119,7 @@ constexpr void Game::resolve_hand(Player& player, uint8_t hand_index) noexcept {
         player.add_to_bankroll(payout);
     }
 
-    game_stats.increment_hands_played();
+    hands_played_count++;
 }
 
 constexpr uint32_t Game::calculate_payout(HandOutcome outcome, uint32_t bet) const noexcept {
@@ -162,15 +164,14 @@ constexpr const Player& Game::get_dealer() const noexcept {
 }
 
 constexpr void Game::finalize_player_statistics() noexcept {
+}
+
+constexpr GameStatistics Game::aggregate_statistics() const noexcept {
     uint64_t total_ending = 0;
     for (uint8_t i = 0; i < player_count; i++) {
         total_ending += players[i].get_bankroll();
     }
-    game_stats.set_ending_bankroll(static_cast<uint32_t>(total_ending));
-}
-
-constexpr GameStatistics Game::aggregate_statistics() const noexcept {
-    return game_stats;
+    return GameStatistics(hands_played_count, starting_bankroll_total, static_cast<uint32_t>(total_ending));
 }
 
 #endif

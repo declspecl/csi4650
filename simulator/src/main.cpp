@@ -1,4 +1,4 @@
-#include "game.hpp"
+#include <blackjack/game/game.hpp>
 
 #include <omp.h>
 #include <iostream>
@@ -11,7 +11,7 @@ int main(int argc, char* argv[]) {
     std::cout << "OpenMP NOT enabled\n";
 #endif
 
-    Game game;
+    blackjack::game::Game game;
 
     return 0;
 }

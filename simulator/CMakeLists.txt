@@ -22,26 +22,20 @@ project(
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-SET(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-file(
-    GLOB_RECURSE PROJECT_SOURCES CONFIGURE_DEPENDS
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cxx
-)
+get_filename_component(_CXX_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
+get_filename_component(_LLVM_ROOT "${_CXX_DIR}" DIRECTORY)
+link_directories(${_LLVM_ROOT}/lib/c++)
 
 file(
     GLOB_RECURSE PROJECT_HEADERS CONFIGURE_DEPENDS
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/*.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/*.hpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/*.hh
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/*.hxx
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/blackjack/**/*.hpp
 )
 
 add_executable(
     blackjack_simulator
-    ${PROJECT_SOURCES}
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp
     ${PROJECT_HEADERS}
 )
 

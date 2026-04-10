@@ -56,6 +56,9 @@ namespace blackjack::player {
         [[nodiscard]] inline const Hand& get_hand(uint8_t index) const noexcept;
         [[nodiscard]] inline uint8_t get_active_hand_count() const noexcept;
         inline void set_active_hand_count(uint8_t count) noexcept;
+
+        [[nodiscard]] inline PlayerStrategy* get_strategy() const noexcept;
+        inline void set_strategy(std::unique_ptr<PlayerStrategy> strategy) noexcept;
     };
 }
 
@@ -135,6 +138,14 @@ namespace blackjack::player {
 
     void Player::set_active_hand_count(uint8_t count) noexcept {
         this->active_hand_count = count;
+    }
+
+    [[nodiscard]] inline PlayerStrategy* Player::get_strategy() const noexcept {
+        return this->player_strategy.get();
+    }
+
+    void Player::set_strategy(std::unique_ptr<PlayerStrategy> strategy) noexcept {
+        this->player_strategy = std::move(strategy);
     }
 }
 

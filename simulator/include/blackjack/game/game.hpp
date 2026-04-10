@@ -7,6 +7,7 @@
 #include <blackjack/game/game_statistics.hpp>
 #include <blackjack/hand/hand_origin.hpp>
 #include <blackjack/hand/hand_outcome.hpp>
+#include <blackjack/player/strategy/dealer.hpp>
 
 #include <array>
 #include <cassert>
@@ -37,6 +38,7 @@ namespace blackjack::game {
         explicit inline Game(const BettingConfig& config) noexcept;
 
         inline void initialize_round() noexcept;
+        inline void play_round(uint64_t seed) noexcept;
         inline void resolve_hand(Player& player, uint8_t hand_index) noexcept;
         inline void resolve_all_hands() noexcept;
 
@@ -54,6 +56,10 @@ namespace blackjack::game {
         [[nodiscard]] inline Player& get_player(uint8_t index) noexcept;
         [[nodiscard]] inline const Player& get_dealer() const noexcept;
         [[nodiscard]] inline GameStatistics aggregate_statistics() const noexcept;
+
+    private:
+        inline void play_turn_for_player(Player& player, uint8_t hand_index) noexcept;
+        inline void play_dealer_turn() noexcept;
     };
 }
 
@@ -188,6 +194,86 @@ namespace blackjack::game {
             this->starting_bankroll_total,
             static_cast<uint32_t>(total_ending)
         );
+    }
+
+    void Game::play_turn_for_player(Player& player, uint8_t hand_index) noexcept {
+        using blackjack::player::strategy::DealerStrategy;
+        using blackjack::player::strategy::Decision;
+        using blackjack::player::strategy::GameContext;
+
+        DealerStrategy fallback;
+        blackjack::player::strategy::PlayerStrategy* strategy = player.get_strategy();
+        blackjack::player::strategy::PlayerStrategy* effective = strategy ? strategy : &fallback;
+
+        const Card& upcard = this->dealer.get_hand(0).get_cards_data()[1];
+
+        while (!player.get_hand(hand_index).is_bust()) {
+            GameContext ctx(player.get_hand(hand_index), upcard);
+            Decision decision = effective->get_decision(ctx);
+
+            if (decision == Decision::HIT) {
+                player.add_card_to_hand(hand_index, this->shoe.draw());
+            } else {
+                break;
+            }
+        }
+    }
+
+    void Game::play_dealer_turn() noexcept {
+        using blackjack::player::strategy::DealerStrategy;
+        using blackjack::player::strategy::Decision;
+        using blackjack::player::strategy::GameContext;
+
+        DealerStrategy dealer_strategy;
+        const Card& upcard = this->dealer.get_hand(0).get_cards_data()[1];
+
+        while (!this->dealer.get_hand(0).is_bust()) {
+            GameContext ctx(this->dealer.get_hand(0), upcard);
+            Decision decision = dealer_strategy.get_decision(ctx);
+
+            if (decision == Decision::HIT) {
+                this->dealer.add_card_to_hand(0, this->shoe.draw());
+            } else {
+                break;
+            }
+        }
+    }
+
+    void Game::play_round(uint64_t seed) noexcept {
+        this->shoe.shuffle(seed);
+
+        for (uint8_t i = 0; i < this->player_count; i++) {
+            this->players[i].clear_hand(0);
+            this->players[i].set_active_hand_count(1);
+        }
+        this->dealer.clear_hand(0);
+
+        for (uint8_t i = 0; i < this->player_count; i++) {
+            bool bet_placed = this->players[i].place_bet(this->betting_config.get_min_bet(), this->betting_config);
+            if (!bet_placed) {
+                this->players[i].set_active_hand_count(0);
+            }
+        }
+
+        for (uint8_t deal_round = 0; deal_round < 2; deal_round++) {
+            for (uint8_t i = 0; i < this->player_count; i++) {
+                this->players[i].add_card_to_hand(0, this->shoe.draw());
+            }
+            this->dealer.add_card_to_hand(0, this->shoe.draw());
+        }
+
+        for (uint8_t i = 0; i < this->player_count; i++) {
+            if (this->players[i].get_active_hand_count() > 0
+                    && !this->players[i].get_hand(0).is_blackjack()) {
+                this->play_turn_for_player(this->players[i], 0);
+            }
+        }
+
+        if (!this->dealer.get_hand(0).is_blackjack()) {
+            this->play_dealer_turn();
+        }
+
+        this->resolve_all_hands();
     }
 }
 

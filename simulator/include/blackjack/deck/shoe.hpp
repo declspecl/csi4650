@@ -25,6 +25,7 @@ namespace blackjack::deck {
 
         [[nodiscard]] inline Card draw() noexcept;
         [[nodiscard]] inline bool is_empty() const noexcept;
+        inline void shuffle(uint64_t seed) noexcept;
     };
 }
 
@@ -53,6 +54,13 @@ namespace blackjack::deck {
     bool Shoe::is_empty() const noexcept {
         return (this->current_deck_index >= this->decks_to_use_count)
             && this->decks[this->current_deck_index].is_empty();
+    }
+
+    void Shoe::shuffle(uint64_t seed) noexcept {
+        for (uint8_t i = 0; i < this->decks_to_use_count; i++) {
+            this->decks[i].shuffle(seed + i);
+        }
+        this->current_deck_index = 0;
     }
 }
 

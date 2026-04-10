@@ -3,9 +3,11 @@
 
 #include <blackjack/card/card.hpp>
 
+#include <algorithm>
 #include <array>
 #include <cassert>
 #include <cstdint>
+#include <random>
 
 using blackjack::card::Card;
 using blackjack::card::Rank;
@@ -43,6 +45,7 @@ namespace blackjack::deck {
 
         [[nodiscard]] inline Card draw() noexcept;
         [[nodiscard]] inline bool is_empty() const noexcept;
+        inline void shuffle(uint64_t seed) noexcept;
     };
 }
 
@@ -60,6 +63,12 @@ namespace blackjack::deck {
 
     bool Deck::is_empty() const noexcept {
         return this->cards_remaining == 0;
+    }
+
+    void Deck::shuffle(uint64_t seed) noexcept {
+        std::mt19937_64 rng(seed);
+        std::shuffle(this->cards.begin(), this->cards.end(), rng);
+        this->cards_remaining = DECK_SIZE;
     }
 }
 

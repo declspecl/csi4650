@@ -20,6 +20,11 @@ project(
     LANGUAGES CXX
 )
 
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    add_compile_options(-fprofile-instr-generate -fcoverage-mapping)
+    add_link_options(-fprofile-instr-generate -fcoverage-mapping)
+endif()
+
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -79,4 +84,24 @@ target_include_directories(
 target_link_libraries(
     test_runner
     PRIVATE GTest::gtest_main pthread
+)
+
+get_filename_component(_LLVM_BIN "${CMAKE_CXX_COMPILER}" DIRECTORY)
+find_program(LLVM_PROFDATA llvm-profdata REQUIRED HINTS "${_LLVM_BIN}")
+find_program(LLVM_COV llvm-cov REQUIRED HINTS "${_LLVM_BIN}")
+
+set(PROFRAW "${CMAKE_CURRENT_BINARY_DIR}/test_runner.profraw")
+set(PROFDATA "${CMAKE_CURRENT_BINARY_DIR}/test_runner.profdata")
+
+add_custom_target(coverage
+    COMMENT "Running tests with coverage..."
+
+    COMMAND ${CMAKE_COMMAND} -E env "LLVM_PROFILE_FILE=${PROFRAW}" $<TARGET_FILE:test_runner>
+    COMMAND ${LLVM_PROFDATA} merge -sparse "${PROFRAW}" -o "${PROFDATA}"
+    COMMAND ${LLVM_COV} report
+        $<TARGET_FILE:test_runner> -instr-profile="${PROFDATA}"
+        -ignore-filename-regex="googletest|gtest|/usr/|test/"
+
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    DEPENDS test_runner
 )

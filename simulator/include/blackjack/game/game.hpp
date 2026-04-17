@@ -5,29 +5,47 @@
 #include <blackjack/deck/shoe.hpp>
 #include <blackjack/game/betting_config.hpp>
 #include <blackjack/game/game_statistics.hpp>
+#include <blackjack/game/hand_round_state.hpp>
 #include <blackjack/hand/hand_origin.hpp>
 #include <blackjack/hand/hand_outcome.hpp>
 #include <blackjack/player/strategy/dealer.hpp>
 
 #include <array>
-#include <cassert>
 #include <cstdint>
+#include <utility>
 
 using blackjack::player::Player;
 using blackjack::deck::Shoe;
 using blackjack::hand::Hand;
 using blackjack::hand::HandOutcome;
 using blackjack::hand::HandOrigin;
+using blackjack::player::strategy::Decision;
+using blackjack::player::strategy::DealerStrategy;
+using blackjack::player::strategy::GameContext;
+using blackjack::player::strategy::LegalActions;
+using blackjack::player::strategy::PlayerStrategy;
 
 namespace blackjack::game {
+    enum class ActionApplicationResult : uint8_t {
+        APPLIED_CONTINUE,
+        APPLIED_TURN_COMPLETE,
+        ILLEGAL_ACTION,
+        UNSUPPORTED_ACTION,
+    };
+
     class Game {
     public:
         static constexpr uint8_t MAX_NON_DEALER_PLAYERS = 7;
 
     private:
         std::array<Player, MAX_NON_DEALER_PLAYERS> players;
+        std::array<
+            std::array<HandRoundState, Player::MAX_POSSIBLE_HANDS>,
+            MAX_NON_DEALER_PLAYERS
+        > player_hand_states;
         Shoe shoe;
         Player dealer;
+        HandRoundState dealer_hand_state;
         uint8_t player_count;
         BettingConfig betting_config;
         uint64_t hands_played_count;
@@ -39,13 +57,20 @@ namespace blackjack::game {
 
         inline void initialize_round() noexcept;
         inline void play_round(uint64_t seed) noexcept;
-        inline void resolve_hand(Player& player, uint8_t hand_index) noexcept;
-        inline void resolve_all_hands() noexcept;
+
+        [[nodiscard]] inline ActionApplicationResult apply_decision(
+            uint8_t player_index,
+            uint8_t hand_index,
+            Decision decision
+        ) noexcept;
 
         [[nodiscard]] inline HandOutcome determine_outcome(
             const Hand& player_hand,
             const Hand& dealer_hand
         ) const noexcept;
+
+        inline void resolve_hand(Player& player, uint8_t hand_index) noexcept;
+        inline void resolve_all_hands() noexcept;
 
         [[nodiscard]] inline uint32_t calculate_payout(
             HandOutcome outcome,
@@ -58,8 +83,23 @@ namespace blackjack::game {
         [[nodiscard]] inline GameStatistics aggregate_statistics() const noexcept;
 
     private:
-        inline void play_turn_for_player(Player& player, uint8_t hand_index) noexcept;
+        [[nodiscard]] inline ActionApplicationResult apply_dealer_decision(Decision decision) noexcept;
+        inline void play_turn_for_player(uint8_t player_index, uint8_t hand_index) noexcept;
         inline void play_dealer_turn() noexcept;
+        [[nodiscard]] inline HandRoundState& get_player_hand_state(uint8_t player_index, uint8_t hand_index) noexcept;
+        [[nodiscard]] inline const HandRoundState& get_player_hand_state(uint8_t player_index, uint8_t hand_index) const noexcept;
+        [[nodiscard]] inline bool is_first_action(uint8_t player_index, uint8_t hand_index) const noexcept;
+        [[nodiscard]] inline bool can_double(uint8_t player_index, uint8_t hand_index) const noexcept;
+        [[nodiscard]] inline bool can_split(uint8_t player_index, uint8_t hand_index) const noexcept;
+        [[nodiscard]] inline bool can_surrender(uint8_t player_index, uint8_t hand_index) const noexcept;
+        [[nodiscard]] inline bool is_hand_turn_complete(uint8_t player_index, uint8_t hand_index) const noexcept;
+        [[nodiscard]] inline bool is_dealer_turn_complete() const noexcept;
+        [[nodiscard]] inline LegalActions make_legal_actions(
+            uint8_t player_index,
+            uint8_t hand_index
+        ) const noexcept;
+
+        [[nodiscard]] static inline ActionApplicationResult eligibility_result(bool eligible) noexcept;
     };
 }
 
@@ -67,8 +107,10 @@ namespace blackjack::game {
 namespace blackjack::game {
     Game::Game() noexcept
         : players({})
+        , player_hand_states({})
         , shoe()
         , dealer()
+        , dealer_hand_state()
         , player_count(MAX_NON_DEALER_PLAYERS)
         , betting_config()
         , hands_played_count(0)
@@ -77,8 +119,10 @@ namespace blackjack::game {
 
     Game::Game(const BettingConfig& config) noexcept
         : players({})
+        , player_hand_states({})
         , shoe()
         , dealer()
+        , dealer_hand_state()
         , player_count(MAX_NON_DEALER_PLAYERS)
         , betting_config(config)
         , hands_played_count(0)
@@ -95,6 +139,48 @@ namespace blackjack::game {
         }
 
         this->dealer.clear_hand(0);
+    }
+
+    [[nodiscard]] inline ActionApplicationResult Game::apply_decision(
+        uint8_t player_index,
+        uint8_t hand_index,
+        Decision decision
+    ) noexcept {
+        Player& player = this->players[player_index];
+        if (hand_index >= player.get_active_hand_count()) {
+            return ActionApplicationResult::ILLEGAL_ACTION;
+        }
+
+        if (this->is_hand_turn_complete(player_index, hand_index)) {
+            return ActionApplicationResult::ILLEGAL_ACTION;
+        }
+
+        HandRoundState& state = this->get_player_hand_state(player_index, hand_index);
+
+        switch (decision) {
+            case Decision::HIT:
+                player.add_card_to_hand(hand_index, this->shoe.draw());
+                state.action_count++;
+                return this->is_hand_turn_complete(player_index, hand_index)
+                    ? ActionApplicationResult::APPLIED_TURN_COMPLETE
+                    : ActionApplicationResult::APPLIED_CONTINUE;
+
+            case Decision::STAND:
+                state.stood = true;
+                state.action_count++;
+                return ActionApplicationResult::APPLIED_TURN_COMPLETE;
+
+            case Decision::DOUBLE:
+                return Game::eligibility_result(this->can_double(player_index, hand_index));
+
+            case Decision::SPLIT:
+                return Game::eligibility_result(this->can_split(player_index, hand_index));
+
+            case Decision::SURRENDER:
+                return Game::eligibility_result(this->can_surrender(player_index, hand_index));
+        }
+
+        std::unreachable();
     }
 
     [[nodiscard]] inline HandOutcome Game::determine_outcome(
@@ -176,7 +262,6 @@ namespace blackjack::game {
     }
 
     [[nodiscard]] inline Player& Game::get_player(uint8_t index) noexcept {
-        assert(index < this->player_count);
         return this->players[index];
     }
 
@@ -196,57 +281,159 @@ namespace blackjack::game {
         );
     }
 
-    void Game::play_turn_for_player(Player& player, uint8_t hand_index) noexcept {
-        using blackjack::player::strategy::DealerStrategy;
-        using blackjack::player::strategy::Decision;
-        using blackjack::player::strategy::GameContext;
+    inline ActionApplicationResult Game::apply_dealer_decision(Decision decision) noexcept {
+        switch (decision) {
+            case Decision::HIT:
+                this->dealer.add_card_to_hand(0, this->shoe.draw());
+                this->dealer_hand_state.action_count++;
+                return this->is_dealer_turn_complete()
+                    ? ActionApplicationResult::APPLIED_TURN_COMPLETE
+                    : ActionApplicationResult::APPLIED_CONTINUE;
 
-        DealerStrategy fallback;
-        blackjack::player::strategy::PlayerStrategy* strategy = player.get_strategy();
-        blackjack::player::strategy::PlayerStrategy* effective = strategy ? strategy : &fallback;
+            case Decision::STAND:
+                this->dealer_hand_state.stood = true;
+                this->dealer_hand_state.action_count++;
+                return ActionApplicationResult::APPLIED_TURN_COMPLETE;
 
-        const Card& upcard = this->dealer.get_hand(0).get_cards_data()[1];
+            case Decision::DOUBLE:
+            case Decision::SPLIT:
+            case Decision::SURRENDER:
+                return ActionApplicationResult::ILLEGAL_ACTION;
+        }
 
-        while (!player.get_hand(hand_index).is_bust()) {
-            GameContext ctx(player.get_hand(hand_index), upcard);
-            Decision decision = effective->get_decision(ctx);
+        std::unreachable();
+    }
 
-            if (decision == Decision::HIT) {
-                player.add_card_to_hand(hand_index, this->shoe.draw());
-            } else {
+    void Game::play_turn_for_player(uint8_t player_index, uint8_t hand_index) noexcept {
+        static DealerStrategy fallback;
+
+        Player& player = this->players[player_index];
+        PlayerStrategy* strategy = player.get_strategy();
+        PlayerStrategy* effective = strategy ? strategy : &fallback;
+
+        while (!this->is_hand_turn_complete(player_index, hand_index)) {
+            const Card& upcard = this->dealer.get_hand(0).get_cards_data()[1];
+            GameContext ctx(
+                player.get_hand(hand_index),
+                upcard,
+                this->make_legal_actions(player_index, hand_index)
+            );
+            ActionApplicationResult result = this->apply_decision(
+                player_index,
+                hand_index,
+                effective->get_decision(ctx)
+            );
+
+            if (result == ActionApplicationResult::APPLIED_TURN_COMPLETE) {
                 break;
             }
         }
     }
 
     void Game::play_dealer_turn() noexcept {
-        using blackjack::player::strategy::DealerStrategy;
-        using blackjack::player::strategy::Decision;
-        using blackjack::player::strategy::GameContext;
-
         DealerStrategy dealer_strategy;
         const Card& upcard = this->dealer.get_hand(0).get_cards_data()[1];
 
-        while (!this->dealer.get_hand(0).is_bust()) {
-            GameContext ctx(this->dealer.get_hand(0), upcard);
-            Decision decision = dealer_strategy.get_decision(ctx);
-
-            if (decision == Decision::HIT) {
-                this->dealer.add_card_to_hand(0, this->shoe.draw());
-            } else {
+        while (!this->is_dealer_turn_complete()) {
+            GameContext ctx(this->dealer.get_hand(0), upcard, LegalActions::none());
+            ActionApplicationResult result = this->apply_dealer_decision(dealer_strategy.get_decision(ctx));
+            if (result == ActionApplicationResult::APPLIED_TURN_COMPLETE) {
                 break;
             }
         }
+    }
+
+    [[nodiscard]] inline HandRoundState& Game::get_player_hand_state(uint8_t player_index, uint8_t hand_index) noexcept {
+        return this->player_hand_states[player_index][hand_index];
+    }
+
+    [[nodiscard]] inline const HandRoundState& Game::get_player_hand_state(uint8_t player_index, uint8_t hand_index) const noexcept {
+        return this->player_hand_states[player_index][hand_index];
+    }
+
+    [[nodiscard]] inline bool Game::is_first_action(uint8_t player_index, uint8_t hand_index) const noexcept {
+        return this->get_player_hand_state(player_index, hand_index).action_count == 0;
+    }
+
+    [[nodiscard]] inline bool Game::can_double(uint8_t player_index, uint8_t hand_index) const noexcept {
+        const Player& player = this->players[player_index];
+        const Hand& hand = player.get_hand(hand_index);
+
+        return this->is_first_action(player_index, hand_index)
+            && hand.card_count() == 2
+            && hand.get_bet() > 0
+            && player.has_sufficient_funds(hand.get_bet());
+    }
+
+    [[nodiscard]] inline bool Game::can_split(uint8_t player_index, uint8_t hand_index) const noexcept {
+        const Player& player = this->players[player_index];
+        const Hand& hand = player.get_hand(hand_index);
+        if (hand.card_count() != 2 || hand.get_bet() == 0) {
+            return false;
+        }
+
+        const Card* cards = hand.get_cards_data();
+
+        return player.get_active_hand_count() < Player::MAX_POSSIBLE_HANDS
+            && player.has_sufficient_funds(hand.get_bet())
+            && cards[0].get_rank() == cards[1].get_rank();
+    }
+
+    [[nodiscard]] inline bool Game::can_surrender(uint8_t player_index, uint8_t hand_index) const noexcept {
+        const Hand& hand = this->players[player_index].get_hand(hand_index);
+
+        return this->is_first_action(player_index, hand_index)
+            && hand.card_count() == 2
+            && hand.get_bet() > 0;
+    }
+
+    [[nodiscard]] inline bool Game::is_hand_turn_complete(uint8_t player_index, uint8_t hand_index) const noexcept {
+        const Hand& hand = this->players[player_index].get_hand(hand_index);
+        const HandRoundState& state = this->get_player_hand_state(player_index, hand_index);
+
+        return hand.is_bust()
+            || hand.is_blackjack()
+            || state.stood
+            || state.surrendered;
+    }
+
+    [[nodiscard]] inline bool Game::is_dealer_turn_complete() const noexcept {
+        const Hand& dealer_hand = this->dealer.get_hand(0);
+        return dealer_hand.is_bust()
+            || dealer_hand.is_blackjack()
+            || this->dealer_hand_state.stood;
+    }
+
+    [[nodiscard]] inline LegalActions Game::make_legal_actions(
+        uint8_t player_index,
+        uint8_t hand_index
+    ) const noexcept {
+        return LegalActions{
+            this->can_double(player_index, hand_index),
+            this->can_split(player_index, hand_index),
+            this->can_surrender(player_index, hand_index),
+        };
+    }
+
+    [[nodiscard]] inline ActionApplicationResult Game::eligibility_result(bool eligible) noexcept {
+        return eligible
+            ? ActionApplicationResult::UNSUPPORTED_ACTION
+            : ActionApplicationResult::ILLEGAL_ACTION;
     }
 
     void Game::play_round(uint64_t seed) noexcept {
         this->shoe.shuffle(seed);
 
         for (uint8_t i = 0; i < this->player_count; i++) {
-            this->players[i].clear_hand(0);
             this->players[i].set_active_hand_count(1);
+            for (uint8_t h = 0; h < Player::MAX_POSSIBLE_HANDS; h++) {
+                this->players[i].clear_hand(h);
+                this->player_hand_states[i][h].reset();
+            }
         }
+
         this->dealer.clear_hand(0);
+        this->dealer_hand_state.reset();
 
         for (uint8_t i = 0; i < this->player_count; i++) {
             bool bet_placed = this->players[i].place_bet(this->betting_config.get_min_bet(), this->betting_config);
@@ -257,15 +444,19 @@ namespace blackjack::game {
 
         for (uint8_t deal_round = 0; deal_round < 2; deal_round++) {
             for (uint8_t i = 0; i < this->player_count; i++) {
-                this->players[i].add_card_to_hand(0, this->shoe.draw());
+                if (this->players[i].get_active_hand_count() > 0) {
+                    this->players[i].add_card_to_hand(0, this->shoe.draw());
+                }
             }
+
             this->dealer.add_card_to_hand(0, this->shoe.draw());
         }
 
         for (uint8_t i = 0; i < this->player_count; i++) {
             if (this->players[i].get_active_hand_count() > 0
-                    && !this->players[i].get_hand(0).is_blackjack()) {
-                this->play_turn_for_player(this->players[i], 0);
+                && !this->players[i].get_hand(0).is_blackjack()
+            ) {
+                this->play_turn_for_player(i, 0);
             }
         }
 

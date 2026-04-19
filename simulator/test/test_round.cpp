@@ -163,7 +163,7 @@ TEST(RoundTest, ApplyDecisionStandEndsTurnExplicitly) {
     EXPECT_EQ(game.apply_decision(0, 0, Decision::HIT), ActionApplicationResult::ILLEGAL_ACTION);
 }
 
-TEST(RoundTest, EligibleDoubleIsExplicitlyUnsupported) {
+TEST(RoundTest, DoubleDrawsOneCardAndDoublesBet) {
     Game game = make_game();
     set_player_hand(
         game,
@@ -173,10 +173,14 @@ TEST(RoundTest, EligibleDoubleIsExplicitlyUnsupported) {
         100
     );
 
-    EXPECT_EQ(game.apply_decision(0, 0, Decision::DOUBLE), ActionApplicationResult::UNSUPPORTED_ACTION);
+    ActionApplicationResult result = game.apply_decision(0, 0, Decision::DOUBLE);
+
+    EXPECT_EQ(result, ActionApplicationResult::APPLIED_TURN_COMPLETE);
+    EXPECT_EQ(game.get_player(0).get_hand(0).card_count(), 3);
+    EXPECT_EQ(game.get_player(0).get_hand(0).get_bet(), 200u);
 }
 
-TEST(RoundTest, EligibleSplitIsExplicitlyUnsupported) {
+TEST(RoundTest, SplitCreatesSecondActiveHand) {
     Game game = make_game();
     set_player_hand(
         game,
@@ -186,10 +190,15 @@ TEST(RoundTest, EligibleSplitIsExplicitlyUnsupported) {
         100
     );
 
-    EXPECT_EQ(game.apply_decision(0, 0, Decision::SPLIT), ActionApplicationResult::UNSUPPORTED_ACTION);
+    ActionApplicationResult result = game.apply_decision(0, 0, Decision::SPLIT);
+
+    EXPECT_EQ(result, ActionApplicationResult::APPLIED_CONTINUE);
+    EXPECT_EQ(game.get_player(0).get_active_hand_count(), 2);
+    EXPECT_EQ(game.get_player(0).get_hand(0).card_count(), 2);
+    EXPECT_EQ(game.get_player(0).get_hand(1).card_count(), 2);
 }
 
-TEST(RoundTest, EligibleSurrenderIsExplicitlyUnsupported) {
+TEST(RoundTest, SurrenderReturnHalfBetAndEndsTurn) {
     Game game = make_game();
     set_player_hand(
         game,
@@ -198,8 +207,12 @@ TEST(RoundTest, EligibleSurrenderIsExplicitlyUnsupported) {
         Card(Suit::HEARTS, Rank::SIX),
         100
     );
+    uint32_t bankroll_before = game.get_player(0).get_bankroll();
 
-    EXPECT_EQ(game.apply_decision(0, 0, Decision::SURRENDER), ActionApplicationResult::UNSUPPORTED_ACTION);
+    ActionApplicationResult result = game.apply_decision(0, 0, Decision::SURRENDER);
+
+    EXPECT_EQ(result, ActionApplicationResult::APPLIED_TURN_COMPLETE);
+    EXPECT_EQ(game.get_player(0).get_bankroll(), bankroll_before + 50);
 }
 
 TEST(RoundTest, ApplyDecisionOnInactiveHandIndexIsIllegal) {

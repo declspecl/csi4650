@@ -33,6 +33,7 @@ namespace blackjack::hand {
         inline Hand() noexcept;
 
         inline void add_card(const Card& card) noexcept;
+        [[nodiscard]] inline Card pop_card() noexcept;
         inline void clear() noexcept;
 
         inline void set_bet(uint32_t bet) noexcept;
@@ -80,6 +81,11 @@ namespace blackjack::hand {
         }
 
         return value;
+    }
+
+    [[nodiscard]] inline Card Hand::pop_card() noexcept {
+        assert(this->cards_in_hand > 0);
+        return this->cards[--this->cards_in_hand];
     }
 
     void Hand::clear() noexcept {

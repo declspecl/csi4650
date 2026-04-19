@@ -99,7 +99,6 @@ namespace blackjack::game {
             uint8_t hand_index
         ) const noexcept;
 
-        [[nodiscard]] static inline ActionApplicationResult eligibility_result(bool eligible) noexcept;
     };
 }
 
@@ -170,14 +169,52 @@ namespace blackjack::game {
                 state.action_count++;
                 return ActionApplicationResult::APPLIED_TURN_COMPLETE;
 
-            case Decision::DOUBLE:
-                return Game::eligibility_result(this->can_double(player_index, hand_index));
+            case Decision::DOUBLE: {
+                if (!this->can_double(player_index, hand_index)) {
+                    return ActionApplicationResult::ILLEGAL_ACTION;
+                }
+                uint32_t original_bet = player.get_hand(hand_index).get_bet();
+                player.deduct_from_bankroll(original_bet);
+                player.set_hand_bet(hand_index, original_bet * 2);
+                player.add_card_to_hand(hand_index, this->shoe.draw());
+                state.action_count++;
+                return ActionApplicationResult::APPLIED_TURN_COMPLETE;
+            }
 
-            case Decision::SPLIT:
-                return Game::eligibility_result(this->can_split(player_index, hand_index));
+            case Decision::SPLIT: {
+                if (!this->can_split(player_index, hand_index)) {
+                    return ActionApplicationResult::ILLEGAL_ACTION;
+                }
+                uint8_t new_hand_index = player.get_active_hand_count();
+                player.set_active_hand_count(new_hand_index + 1);
 
-            case Decision::SURRENDER:
-                return Game::eligibility_result(this->can_surrender(player_index, hand_index));
+                Card split_card = player.get_hand(hand_index).pop_card();
+                uint32_t split_bet = player.get_hand(hand_index).get_bet();
+
+                player.clear_hand(new_hand_index);
+                player.get_hand(new_hand_index).set_origin(HandOrigin::SPLIT);
+                player.get_hand(new_hand_index).set_bet(split_bet);
+                player.add_card_to_hand(new_hand_index, split_card);
+                player.deduct_from_bankroll(split_bet);
+
+                player.get_hand(hand_index).set_origin(HandOrigin::SPLIT);
+                player.add_card_to_hand(hand_index, this->shoe.draw());
+                player.add_card_to_hand(new_hand_index, this->shoe.draw());
+
+                this->player_hand_states[player_index][new_hand_index].reset();
+                state.action_count++;
+                return ActionApplicationResult::APPLIED_CONTINUE;
+            }
+
+            case Decision::SURRENDER: {
+                if (!this->can_surrender(player_index, hand_index)) {
+                    return ActionApplicationResult::ILLEGAL_ACTION;
+                }
+                player.add_to_bankroll(player.get_hand(hand_index).get_bet() / 2);
+                state.surrendered = true;
+                state.action_count++;
+                return ActionApplicationResult::APPLIED_TURN_COMPLETE;
+            }
         }
 
         std::unreachable();
@@ -415,12 +452,6 @@ namespace blackjack::game {
         };
     }
 
-    [[nodiscard]] inline ActionApplicationResult Game::eligibility_result(bool eligible) noexcept {
-        return eligible
-            ? ActionApplicationResult::UNSUPPORTED_ACTION
-            : ActionApplicationResult::ILLEGAL_ACTION;
-    }
-
     void Game::play_round(uint64_t seed) noexcept {
         this->shoe.shuffle(seed);
 
@@ -453,10 +484,10 @@ namespace blackjack::game {
         }
 
         for (uint8_t i = 0; i < this->player_count; i++) {
-            if (this->players[i].get_active_hand_count() > 0
-                && !this->players[i].get_hand(0).is_blackjack()
-            ) {
-                this->play_turn_for_player(i, 0);
+            for (uint8_t h = 0; h < this->players[i].get_active_hand_count(); h++) {
+                if (!this->players[i].get_hand(h).is_blackjack()) {
+                    this->play_turn_for_player(i, h);
+                }
             }
         }
 

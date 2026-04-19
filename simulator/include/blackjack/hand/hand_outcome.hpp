@@ -12,6 +12,7 @@ namespace blackjack::hand {
         PLAYER_BUST_LOSS,
         DEALER_WIN_LOSS,
         DEALER_BLACKJACK_LOSS,
+        SURRENDER_LOSS,
 
         PUSH,
     };

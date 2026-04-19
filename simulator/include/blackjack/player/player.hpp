@@ -53,6 +53,7 @@ namespace blackjack::player {
         inline void add_card_to_hand(uint8_t index, const Card& card) noexcept;
         inline void set_hand_bet(uint8_t index, uint32_t bet) noexcept;
 
+        [[nodiscard]] inline Hand& get_hand(uint8_t index) noexcept;
         [[nodiscard]] inline const Hand& get_hand(uint8_t index) const noexcept;
         [[nodiscard]] inline uint8_t get_active_hand_count() const noexcept;
         inline void set_active_hand_count(uint8_t count) noexcept;
@@ -126,6 +127,10 @@ namespace blackjack::player {
 
     void Player::set_hand_bet(uint8_t index, uint32_t bet) noexcept {
         this->hands[index].set_bet(bet);
+    }
+
+    [[nodiscard]] inline Hand& Player::get_hand(uint8_t index) noexcept {
+        return this->hands[index];
     }
 
     [[nodiscard]] inline const Hand& Player::get_hand(uint8_t index) const noexcept {

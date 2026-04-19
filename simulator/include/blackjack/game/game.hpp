@@ -80,6 +80,7 @@ namespace blackjack::game {
         [[nodiscard]] inline const BettingConfig& get_betting_config() const noexcept;
         [[nodiscard]] inline Player& get_player(uint8_t index) noexcept;
         [[nodiscard]] inline const Player& get_dealer() const noexcept;
+        [[nodiscard]] inline Player& get_dealer() noexcept;
         [[nodiscard]] inline GameStatistics aggregate_statistics() const noexcept;
 
     private:
@@ -177,6 +178,7 @@ namespace blackjack::game {
                 player.deduct_from_bankroll(original_bet);
                 player.set_hand_bet(hand_index, original_bet * 2);
                 player.add_card_to_hand(hand_index, this->shoe.draw());
+                state.doubled = true;
                 state.action_count++;
                 return ActionApplicationResult::APPLIED_TURN_COMPLETE;
             }
@@ -211,6 +213,7 @@ namespace blackjack::game {
                     return ActionApplicationResult::ILLEGAL_ACTION;
                 }
                 player.add_to_bankroll(player.get_hand(hand_index).get_bet() / 2);
+                player.get_hand(hand_index).set_surrendered(true);
                 state.surrendered = true;
                 state.action_count++;
                 return ActionApplicationResult::APPLIED_TURN_COMPLETE;
@@ -225,6 +228,10 @@ namespace blackjack::game {
         const Hand& dealer_hand
     ) const noexcept {
         bool was_split = (player_hand.get_origin() == HandOrigin::SPLIT);
+
+        if (player_hand.is_surrendered()) {
+            return HandOutcome::SURRENDER_LOSS;
+        }
 
         if (player_hand.is_bust()) {
             return HandOutcome::PLAYER_BUST_LOSS;
@@ -281,6 +288,7 @@ namespace blackjack::game {
             case HandOutcome::PLAYER_BUST_LOSS:
             case HandOutcome::DEALER_WIN_LOSS:
             case HandOutcome::DEALER_BLACKJACK_LOSS:
+            case HandOutcome::SURRENDER_LOSS:
                 return 0;
         }
     }
@@ -303,6 +311,10 @@ namespace blackjack::game {
     }
 
     [[nodiscard]] inline const Player& Game::get_dealer() const noexcept {
+        return this->dealer;
+    }
+
+    [[nodiscard]] inline Player& Game::get_dealer() noexcept {
         return this->dealer;
     }
 
@@ -431,7 +443,8 @@ namespace blackjack::game {
         return hand.is_bust()
             || hand.is_blackjack()
             || state.stood
-            || state.surrendered;
+            || state.surrendered
+            || state.doubled;
     }
 
     [[nodiscard]] inline bool Game::is_dealer_turn_complete() const noexcept {

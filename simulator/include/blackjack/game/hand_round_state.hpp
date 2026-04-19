@@ -12,17 +12,20 @@ namespace blackjack::game {
         uint8_t action_count;
         bool stood;
         bool surrendered;
+        bool doubled;
 
         HandRoundState() noexcept
             : action_count(0)
             , stood(false)
             , surrendered(false)
+            , doubled(false)
         {}
 
         void reset() noexcept {
             this->action_count = 0;
             this->stood = false;
             this->surrendered = false;
+            this->doubled = false;
         }
     };
 }

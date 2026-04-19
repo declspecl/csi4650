@@ -28,6 +28,7 @@ namespace blackjack::hand {
         uint8_t cards_in_hand;
         uint32_t bet_cents;
         HandOrigin origin;
+        bool surrendered;
 
     public:
         inline Hand() noexcept;
@@ -41,6 +42,9 @@ namespace blackjack::hand {
 
         inline void set_origin(HandOrigin new_origin) noexcept;
         [[nodiscard]] inline HandOrigin get_origin() const noexcept;
+
+        inline void set_surrendered(bool value) noexcept;
+        [[nodiscard]] inline bool is_surrendered() const noexcept;
 
         [[nodiscard]] inline uint8_t get_value() const noexcept;
         [[nodiscard]] inline bool is_blackjack() const noexcept;
@@ -57,6 +61,7 @@ namespace blackjack::hand {
         , cards_in_hand(0)
         , bet_cents(0)
         , origin(HandOrigin::NATURAL)
+        , surrendered(false)
     {}
 
     void Hand::add_card(const Card& card) noexcept {
@@ -92,6 +97,7 @@ namespace blackjack::hand {
         this->cards_in_hand = 0;
         this->bet_cents = 0;
         this->origin = HandOrigin::NATURAL;
+        this->surrendered = false;
     }
 
     void Hand::set_bet(uint32_t bet) noexcept {
@@ -108,6 +114,14 @@ namespace blackjack::hand {
 
     [[nodiscard]] inline HandOrigin Hand::get_origin() const noexcept {
         return this->origin;
+    }
+
+    void Hand::set_surrendered(bool value) noexcept {
+        this->surrendered = value;
+    }
+
+    [[nodiscard]] inline bool Hand::is_surrendered() const noexcept {
+        return this->surrendered;
     }
 
     [[nodiscard]] inline bool Hand::is_blackjack() const noexcept {

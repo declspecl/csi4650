@@ -1,5 +1,7 @@
 #include <blackjack/game/game.hpp>
 #include <blackjack/game/betting_config.hpp>
+#include <blackjack/hand/hand_origin.hpp>
+#include <blackjack/hand/hand_outcome.hpp>
 #include <blackjack/player/strategy/bearish.hpp>
 #include <blackjack/player/strategy/bullish.hpp>
 #include <blackjack/player/strategy/strategy.hpp>
@@ -16,8 +18,9 @@ using blackjack::game::ActionApplicationResult;
 using blackjack::game::BettingConfig;
 using blackjack::game::Game;
 using blackjack::hand::Hand;
+using blackjack::hand::HandOrigin;
+using blackjack::hand::HandOutcome;
 using blackjack::player::strategy::BearishStrategy;
-using blackjack::player::strategy::BullishStrategy;
 using blackjack::player::strategy::Decision;
 
 static Game make_game() {
@@ -112,7 +115,6 @@ TEST(RoundTest, SameSeedProducesDeterministicBankrollDelta) {
 }
 
 TEST(RoundTest, DifferentSeedsMayProduceDifferentOutcomes) {
-    // Run many seeds; at least one pair should differ (collision would be astronomically unlikely)
     bool found_difference = false;
 
     Game base = make_game();
@@ -225,14 +227,12 @@ TEST(RoundTest, ApplyDecisionOnInactiveHandIndexIsIllegal) {
         100
     );
 
-    // active_hand_count is 1, so hand_index 1..MAX-1 are all inactive.
     EXPECT_EQ(game.apply_decision(0, 1, Decision::HIT), ActionApplicationResult::ILLEGAL_ACTION);
     EXPECT_EQ(game.apply_decision(0, 1, Decision::STAND), ActionApplicationResult::ILLEGAL_ACTION);
 }
 
 TEST(RoundTest, HitUntilBustCompletesTurnAndRejectsFurtherActions) {
     Game game = make_game();
-    // Force a guaranteed-bust scenario: 10 + 6 + extra hits until value > 21.
     set_player_hand(
         game,
         0,
@@ -246,11 +246,384 @@ TEST(RoundTest, HitUntilBustCompletesTurnAndRejectsFurtherActions) {
         result = game.apply_decision(0, 0, Decision::HIT);
     }
 
-    // Whichever card busts the hand, the final HIT must report turn-complete.
     EXPECT_EQ(result, ActionApplicationResult::APPLIED_TURN_COMPLETE);
     EXPECT_TRUE(game.get_player(0).get_hand(0).is_bust());
 
-    // Subsequent actions on a completed hand are illegal.
     EXPECT_EQ(game.apply_decision(0, 0, Decision::HIT), ActionApplicationResult::ILLEGAL_ACTION);
     EXPECT_EQ(game.apply_decision(0, 0, Decision::STAND), ActionApplicationResult::ILLEGAL_ACTION);
+}
+
+static void set_dealer_hand(Game& game, Card first, Card second) {
+    auto& dealer = game.get_dealer();
+    dealer.clear_hand(0);
+    dealer.add_card_to_hand(0, first);
+    dealer.add_card_to_hand(0, second);
+}
+
+static void setup_hand_with_placed_bet(
+    Game& game,
+    uint8_t player_index,
+    Card first,
+    Card second,
+    uint32_t bet
+) {
+    auto& player = game.get_player(player_index);
+    player.clear_hand(0);
+    player.set_active_hand_count(1);
+    player.add_card_to_hand(0, first);
+    player.add_card_to_hand(0, second);
+    player.set_hand_bet(0, bet);
+    player.deduct_from_bankroll(bet);
+}
+
+static void replace_last_card(Hand& hand, Card replacement) {
+    (void) hand.pop_card();
+    hand.add_card(replacement);
+}
+
+TEST(ActionLifecycleTest, DoubleBlocksAllSubsequentActions) {
+    Game game = make_game();
+    setup_hand_with_placed_bet(
+        game, 0,
+        Card(Suit::SPADES, Rank::FIVE),
+        Card(Suit::HEARTS, Rank::SIX),
+        100
+    );
+
+    ASSERT_EQ(game.apply_decision(0, 0, Decision::DOUBLE), ActionApplicationResult::APPLIED_TURN_COMPLETE);
+
+    EXPECT_EQ(game.apply_decision(0, 0, Decision::HIT),       ActionApplicationResult::ILLEGAL_ACTION);
+    EXPECT_EQ(game.apply_decision(0, 0, Decision::STAND),     ActionApplicationResult::ILLEGAL_ACTION);
+    EXPECT_EQ(game.apply_decision(0, 0, Decision::DOUBLE),    ActionApplicationResult::ILLEGAL_ACTION);
+    EXPECT_EQ(game.apply_decision(0, 0, Decision::SPLIT),     ActionApplicationResult::ILLEGAL_ACTION);
+    EXPECT_EQ(game.apply_decision(0, 0, Decision::SURRENDER), ActionApplicationResult::ILLEGAL_ACTION);
+}
+
+TEST(ActionLifecycleTest, DoubleWinPaysTwoToOneOnDoubledStake) {
+    Game game = make_game();
+    setup_hand_with_placed_bet(
+        game, 0,
+        Card(Suit::SPADES, Rank::FIVE),
+        Card(Suit::HEARTS, Rank::SIX),
+        100
+    );
+    uint32_t initial_bankroll = game.get_betting_config().get_initial_bankroll();
+
+    ASSERT_EQ(game.apply_decision(0, 0, Decision::DOUBLE), ActionApplicationResult::APPLIED_TURN_COMPLETE);
+    replace_last_card(game.get_player(0).get_hand(0), Card(Suit::CLUBS, Rank::NINE));
+    ASSERT_EQ(game.get_player(0).get_hand(0).get_value(), 20u);
+    ASSERT_EQ(game.get_player(0).get_hand(0).get_bet(), 200u);
+
+    set_dealer_hand(game, Card(Suit::DIAMONDS, Rank::NINE), Card(Suit::HEARTS, Rank::NINE));
+
+    game.resolve_hand(game.get_player(0), 0);
+
+    EXPECT_EQ(game.get_player(0).get_bankroll(), initial_bankroll + 200);
+}
+
+TEST(ActionLifecycleTest, DoubleLossLosesDoubledStake) {
+    Game game = make_game();
+    setup_hand_with_placed_bet(
+        game, 0,
+        Card(Suit::SPADES, Rank::FIVE),
+        Card(Suit::HEARTS, Rank::SIX),
+        100
+    );
+    uint32_t initial_bankroll = game.get_betting_config().get_initial_bankroll();
+
+    ASSERT_EQ(game.apply_decision(0, 0, Decision::DOUBLE), ActionApplicationResult::APPLIED_TURN_COMPLETE);
+    replace_last_card(game.get_player(0).get_hand(0), Card(Suit::CLUBS, Rank::FOUR));
+    ASSERT_EQ(game.get_player(0).get_hand(0).get_value(), 15u);
+
+    set_dealer_hand(game, Card(Suit::DIAMONDS, Rank::NINE), Card(Suit::HEARTS, Rank::NINE));
+
+    game.resolve_hand(game.get_player(0), 0);
+
+    EXPECT_EQ(game.get_player(0).get_bankroll(), initial_bankroll - 200);
+}
+
+TEST(ActionLifecycleTest, DoubleBustLosesDoubledStake) {
+    Game game = make_game();
+    setup_hand_with_placed_bet(
+        game, 0,
+        Card(Suit::SPADES, Rank::TEN),
+        Card(Suit::HEARTS, Rank::SIX),
+        100
+    );
+    uint32_t initial_bankroll = game.get_betting_config().get_initial_bankroll();
+
+    ASSERT_EQ(game.apply_decision(0, 0, Decision::DOUBLE), ActionApplicationResult::APPLIED_TURN_COMPLETE);
+    replace_last_card(game.get_player(0).get_hand(0), Card(Suit::CLUBS, Rank::KING));
+    ASSERT_TRUE(game.get_player(0).get_hand(0).is_bust());
+
+    set_dealer_hand(game, Card(Suit::DIAMONDS, Rank::NINE), Card(Suit::HEARTS, Rank::EIGHT));
+
+    game.resolve_hand(game.get_player(0), 0);
+
+    EXPECT_EQ(game.get_player(0).get_bankroll(), initial_bankroll - 200);
+}
+
+TEST(ActionLifecycleTest, DoublePushReturnsDoubledStake) {
+    Game game = make_game();
+    setup_hand_with_placed_bet(
+        game, 0,
+        Card(Suit::SPADES, Rank::FIVE),
+        Card(Suit::HEARTS, Rank::SIX),
+        100
+    );
+    uint32_t initial_bankroll = game.get_betting_config().get_initial_bankroll();
+
+    ASSERT_EQ(game.apply_decision(0, 0, Decision::DOUBLE), ActionApplicationResult::APPLIED_TURN_COMPLETE);
+    replace_last_card(game.get_player(0).get_hand(0), Card(Suit::CLUBS, Rank::SEVEN));
+    ASSERT_EQ(game.get_player(0).get_hand(0).get_value(), 18u);
+
+    set_dealer_hand(game, Card(Suit::DIAMONDS, Rank::NINE), Card(Suit::HEARTS, Rank::NINE));
+
+    game.resolve_hand(game.get_player(0), 0);
+
+    EXPECT_EQ(game.get_player(0).get_bankroll(), initial_bankroll);
+}
+
+TEST(ActionLifecycleTest, SurrenderBlocksAllSubsequentActions) {
+    Game game = make_game();
+    setup_hand_with_placed_bet(
+        game, 0,
+        Card(Suit::SPADES, Rank::TEN),
+        Card(Suit::HEARTS, Rank::SIX),
+        100
+    );
+
+    ASSERT_EQ(game.apply_decision(0, 0, Decision::SURRENDER), ActionApplicationResult::APPLIED_TURN_COMPLETE);
+
+    EXPECT_EQ(game.apply_decision(0, 0, Decision::HIT),       ActionApplicationResult::ILLEGAL_ACTION);
+    EXPECT_EQ(game.apply_decision(0, 0, Decision::STAND),     ActionApplicationResult::ILLEGAL_ACTION);
+    EXPECT_EQ(game.apply_decision(0, 0, Decision::DOUBLE),    ActionApplicationResult::ILLEGAL_ACTION);
+    EXPECT_EQ(game.apply_decision(0, 0, Decision::SPLIT),     ActionApplicationResult::ILLEGAL_ACTION);
+    EXPECT_EQ(game.apply_decision(0, 0, Decision::SURRENDER), ActionApplicationResult::ILLEGAL_ACTION);
+}
+
+TEST(ActionLifecycleTest, SurrenderOutcomeReportsSurrenderLossWithZeroPayout) {
+    Game game = make_game();
+    setup_hand_with_placed_bet(
+        game, 0,
+        Card(Suit::SPADES, Rank::TEN),
+        Card(Suit::HEARTS, Rank::SIX),
+        100
+    );
+    ASSERT_EQ(game.apply_decision(0, 0, Decision::SURRENDER), ActionApplicationResult::APPLIED_TURN_COMPLETE);
+
+    const Hand& player_hand = game.get_player(0).get_hand(0);
+    Hand dealer_hand;
+    dealer_hand.add_card(Card(Suit::DIAMONDS, Rank::NINE));
+    dealer_hand.add_card(Card(Suit::CLUBS, Rank::NINE));
+
+    EXPECT_EQ(game.determine_outcome(player_hand, dealer_hand), HandOutcome::SURRENDER_LOSS);
+    EXPECT_EQ(game.calculate_payout(HandOutcome::SURRENDER_LOSS, 100), 0u);
+}
+
+TEST(ActionLifecycleTest, SurrenderSettlementSkipsRegularPayoutOnDealerBust) {
+    Game game = make_game();
+    setup_hand_with_placed_bet(
+        game, 0,
+        Card(Suit::SPADES, Rank::TEN),
+        Card(Suit::HEARTS, Rank::SIX),
+        100
+    );
+    uint32_t initial_bankroll = game.get_betting_config().get_initial_bankroll();
+
+    ASSERT_EQ(game.apply_decision(0, 0, Decision::SURRENDER), ActionApplicationResult::APPLIED_TURN_COMPLETE);
+
+    set_dealer_hand(game, Card(Suit::DIAMONDS, Rank::KING), Card(Suit::CLUBS, Rank::KING));
+    game.get_dealer().add_card_to_hand(0, Card(Suit::HEARTS, Rank::FIVE));
+    ASSERT_TRUE(game.get_dealer().get_hand(0).is_bust());
+
+    game.resolve_hand(game.get_player(0), 0);
+
+    EXPECT_EQ(game.get_player(0).get_bankroll(), initial_bankroll - 50);
+    EXPECT_EQ(game.aggregate_statistics().get_hands_played(), 1u);
+}
+
+TEST(ActionLifecycleTest, SurrenderSettlementSkipsRegularPayoutOnDealerPush) {
+    Game game = make_game();
+    setup_hand_with_placed_bet(
+        game, 0,
+        Card(Suit::SPADES, Rank::TEN),
+        Card(Suit::HEARTS, Rank::SIX),
+        100
+    );
+    uint32_t initial_bankroll = game.get_betting_config().get_initial_bankroll();
+
+    ASSERT_EQ(game.apply_decision(0, 0, Decision::SURRENDER), ActionApplicationResult::APPLIED_TURN_COMPLETE);
+
+    set_dealer_hand(game, Card(Suit::DIAMONDS, Rank::NINE), Card(Suit::CLUBS, Rank::SEVEN));
+
+    game.resolve_hand(game.get_player(0), 0);
+
+    EXPECT_EQ(game.get_player(0).get_bankroll(), initial_bankroll - 50);
+}
+
+TEST(ActionLifecycleTest, SurrenderSettlementSkipsRegularPayoutOnPlayerHigherValue) {
+    Game game = make_game();
+    setup_hand_with_placed_bet(
+        game, 0,
+        Card(Suit::SPADES, Rank::TEN),
+        Card(Suit::HEARTS, Rank::TEN), 
+        100
+    );
+    uint32_t initial_bankroll = game.get_betting_config().get_initial_bankroll();
+
+    ASSERT_EQ(game.apply_decision(0, 0, Decision::SURRENDER), ActionApplicationResult::APPLIED_TURN_COMPLETE);
+
+    set_dealer_hand(game, Card(Suit::DIAMONDS, Rank::NINE), Card(Suit::CLUBS, Rank::NINE));
+
+    game.resolve_hand(game.get_player(0), 0);
+
+    EXPECT_EQ(game.get_player(0).get_bankroll(), initial_bankroll - 50);
+}
+
+TEST(ActionLifecycleTest, SurrenderAgainstDealerBlackjackStillOnlyLosesHalf) {
+    Game game = make_game();
+    setup_hand_with_placed_bet(
+        game, 0,
+        Card(Suit::SPADES, Rank::TEN),
+        Card(Suit::HEARTS, Rank::SIX),
+        100
+    );
+    uint32_t initial_bankroll = game.get_betting_config().get_initial_bankroll();
+
+    ASSERT_EQ(game.apply_decision(0, 0, Decision::SURRENDER), ActionApplicationResult::APPLIED_TURN_COMPLETE);
+
+    set_dealer_hand(game, Card(Suit::DIAMONDS, Rank::ACE), Card(Suit::CLUBS, Rank::KING));
+    ASSERT_TRUE(game.get_dealer().get_hand(0).is_blackjack());
+
+    game.resolve_hand(game.get_player(0), 0);
+
+    EXPECT_EQ(game.get_player(0).get_bankroll(), initial_bankroll - 50);
+}
+
+TEST(ActionLifecycleTest, SplitDeductsSecondBetAndMarksBothHandsSplitOrigin) {
+    Game game = make_game();
+    setup_hand_with_placed_bet(
+        game, 0,
+        Card(Suit::SPADES, Rank::EIGHT),
+        Card(Suit::HEARTS, Rank::EIGHT),
+        100
+    );
+    uint32_t bankroll_before_split = game.get_player(0).get_bankroll();
+
+    ASSERT_EQ(game.apply_decision(0, 0, Decision::SPLIT), ActionApplicationResult::APPLIED_CONTINUE);
+
+    auto& player = game.get_player(0);
+    EXPECT_EQ(player.get_bankroll(), bankroll_before_split - 100);
+    EXPECT_EQ(player.get_active_hand_count(), 2);
+    EXPECT_EQ(player.get_hand(0).get_bet(), 100u);
+    EXPECT_EQ(player.get_hand(1).get_bet(), 100u);
+    EXPECT_EQ(player.get_hand(0).get_origin(), HandOrigin::SPLIT);
+    EXPECT_EQ(player.get_hand(1).get_origin(), HandOrigin::SPLIT);
+}
+
+TEST(ActionLifecycleTest, SplitBothHandsWinSettledIndependently) {
+    Game game = make_game();
+    setup_hand_with_placed_bet(
+        game, 0,
+        Card(Suit::SPADES, Rank::EIGHT),
+        Card(Suit::HEARTS, Rank::EIGHT),
+        100
+    );
+    uint32_t initial_bankroll = game.get_betting_config().get_initial_bankroll();
+
+    ASSERT_EQ(game.apply_decision(0, 0, Decision::SPLIT), ActionApplicationResult::APPLIED_CONTINUE);
+
+    replace_last_card(game.get_player(0).get_hand(0), Card(Suit::CLUBS, Rank::TEN));
+    replace_last_card(game.get_player(0).get_hand(1), Card(Suit::DIAMONDS, Rank::TEN));
+
+    ASSERT_EQ(game.apply_decision(0, 0, Decision::STAND), ActionApplicationResult::APPLIED_TURN_COMPLETE);
+    ASSERT_EQ(game.apply_decision(0, 1, Decision::STAND), ActionApplicationResult::APPLIED_TURN_COMPLETE);
+
+    set_dealer_hand(game, Card(Suit::HEARTS, Rank::TEN), Card(Suit::SPADES, Rank::SEVEN));
+
+    game.resolve_hand(game.get_player(0), 0);
+    game.resolve_hand(game.get_player(0), 1);
+
+    EXPECT_EQ(game.get_player(0).get_bankroll(), initial_bankroll + 200);
+    EXPECT_EQ(game.aggregate_statistics().get_hands_played(), 2u);
+}
+
+TEST(ActionLifecycleTest, SplitOneWinOneLossSettlesEachHandSeparately) {
+    Game game = make_game();
+    setup_hand_with_placed_bet(
+        game, 0,
+        Card(Suit::SPADES, Rank::EIGHT),
+        Card(Suit::HEARTS, Rank::EIGHT),
+        100
+    );
+    uint32_t initial_bankroll = game.get_betting_config().get_initial_bankroll();
+
+    ASSERT_EQ(game.apply_decision(0, 0, Decision::SPLIT), ActionApplicationResult::APPLIED_CONTINUE);
+
+    replace_last_card(game.get_player(0).get_hand(0), Card(Suit::CLUBS, Rank::TEN));
+    replace_last_card(game.get_player(0).get_hand(1), Card(Suit::DIAMONDS, Rank::FIVE));
+
+    ASSERT_EQ(game.apply_decision(0, 0, Decision::STAND), ActionApplicationResult::APPLIED_TURN_COMPLETE);
+    ASSERT_EQ(game.apply_decision(0, 1, Decision::STAND), ActionApplicationResult::APPLIED_TURN_COMPLETE);
+
+    set_dealer_hand(game, Card(Suit::HEARTS, Rank::TEN), Card(Suit::SPADES, Rank::SEVEN));
+
+    game.resolve_hand(game.get_player(0), 0);
+    game.resolve_hand(game.get_player(0), 1);
+
+    EXPECT_EQ(game.get_player(0).get_bankroll(), initial_bankroll);
+    EXPECT_EQ(game.aggregate_statistics().get_hands_played(), 2u);
+}
+
+TEST(ActionLifecycleTest, SplitTwentyOneDoesNotPayBlackjackOdds) {
+    Game game = make_game();
+    setup_hand_with_placed_bet(
+        game, 0,
+        Card(Suit::SPADES, Rank::ACE),
+        Card(Suit::HEARTS, Rank::ACE),
+        100
+    );
+    uint32_t initial_bankroll = game.get_betting_config().get_initial_bankroll();
+
+    ASSERT_EQ(game.apply_decision(0, 0, Decision::SPLIT), ActionApplicationResult::APPLIED_CONTINUE);
+    replace_last_card(game.get_player(0).get_hand(0), Card(Suit::CLUBS, Rank::KING));
+    replace_last_card(game.get_player(0).get_hand(1), Card(Suit::DIAMONDS, Rank::QUEEN));
+
+    ASSERT_EQ(game.get_player(0).get_hand(0).get_value(), 21u);
+    ASSERT_EQ(game.get_player(0).get_hand(1).get_value(), 21u);
+
+    set_dealer_hand(game, Card(Suit::HEARTS, Rank::TEN), Card(Suit::SPADES, Rank::SEVEN));
+
+    game.resolve_hand(game.get_player(0), 0);
+    game.resolve_hand(game.get_player(0), 1);
+
+    EXPECT_EQ(game.get_player(0).get_bankroll(), initial_bankroll + 200);
+}
+
+TEST(ActionLifecycleTest, SplitHandBustOnlyLosesThatHandsStake) {
+    Game game = make_game();
+    setup_hand_with_placed_bet(
+        game, 0,
+        Card(Suit::SPADES, Rank::EIGHT),
+        Card(Suit::HEARTS, Rank::EIGHT),
+        100
+    );
+    uint32_t initial_bankroll = game.get_betting_config().get_initial_bankroll();
+
+    ASSERT_EQ(game.apply_decision(0, 0, Decision::SPLIT), ActionApplicationResult::APPLIED_CONTINUE);
+
+    replace_last_card(game.get_player(0).get_hand(0), Card(Suit::CLUBS, Rank::TEN));
+    replace_last_card(game.get_player(0).get_hand(1), Card(Suit::DIAMONDS, Rank::FIVE));
+
+    ASSERT_EQ(game.apply_decision(0, 0, Decision::STAND), ActionApplicationResult::APPLIED_TURN_COMPLETE);
+    game.get_player(0).get_hand(1).add_card(Card(Suit::CLUBS, Rank::KING));
+    ASSERT_TRUE(game.get_player(0).get_hand(1).is_bust());
+
+    set_dealer_hand(game, Card(Suit::HEARTS, Rank::TEN), Card(Suit::SPADES, Rank::SEVEN));
+
+    game.resolve_hand(game.get_player(0), 0);
+    game.resolve_hand(game.get_player(0), 1);
+
+    EXPECT_EQ(game.get_player(0).get_bankroll(), initial_bankroll);
 }

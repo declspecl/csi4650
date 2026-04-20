@@ -4,6 +4,7 @@
 #include <blackjack/hand/hand_outcome.hpp>
 #include <blackjack/player/strategy/bearish.hpp>
 #include <blackjack/player/strategy/bullish.hpp>
+#include <blackjack/player/strategy/mimic_dealer.hpp>
 #include <blackjack/player/strategy/strategy.hpp>
 #include <blackjack/card/card.hpp>
 
@@ -22,11 +23,20 @@ using blackjack::hand::HandOrigin;
 using blackjack::hand::HandOutcome;
 using blackjack::player::strategy::BearishStrategy;
 using blackjack::player::strategy::Decision;
+using blackjack::player::strategy::MimicDealerStrategy;
+
+template <typename StrategyT>
+static void seat_all_players(Game& game) {
+    for (uint8_t i = 0; i < Game::MAX_NON_DEALER_PLAYERS; i++) {
+        game.get_player(i).set_strategy(std::make_unique<StrategyT>());
+    }
+}
 
 static Game make_game() {
     BettingConfig config;
     Game game(config);
     game.initialize_round();
+    seat_all_players<MimicDealerStrategy>(game);
     return game;
 }
 

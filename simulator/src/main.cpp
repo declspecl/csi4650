@@ -1,9 +1,15 @@
-#include <blackjack/game/game.hpp>
 #include <blackjack/game/betting_config.hpp>
+#include <blackjack/game/game.hpp>
+#include <blackjack/player/strategy/basic.hpp>
+#include <blackjack/player/strategy/bearish.hpp>
+#include <blackjack/player/strategy/bullish.hpp>
+#include <blackjack/player/strategy/mimic_dealer.hpp>
+#include <blackjack/player/strategy/strategy.hpp>
 
 #include <chrono>
 #include <cstdlib>
 #include <iostream>
+#include <memory>
 #include <omp.h>
 #include <string_view>
 #include <vector>
@@ -11,22 +17,89 @@
 using blackjack::game::BettingConfig;
 using blackjack::game::Game;
 using blackjack::game::GameStatistics;
+using blackjack::player::strategy::BasicStrategy;
+using blackjack::player::strategy::BearishStrategy;
+using blackjack::player::strategy::BullishStrategy;
+using blackjack::player::strategy::MimicDealerStrategy;
+using blackjack::player::strategy::PlayerStrategy;
+
+enum class StrategyKind : uint8_t {
+    BASIC,
+    MIMIC_DEALER,
+    BEARISH,
+    BULLISH,
+};
 
 struct SimConfig {
-    uint32_t game_count      = 1000;
-    uint32_t rounds_per_game = 100;
-    int      threads         = omp_get_max_threads();
-    BettingConfig betting    = BettingConfig{};
+    uint32_t      game_count      = 1000;
+    uint32_t      rounds_per_game = 100;
+    int           threads         = omp_get_max_threads();
+    BettingConfig betting         = BettingConfig{};
+    StrategyKind  strategy        = StrategyKind::BASIC;
 };
+
+static std::string_view strategy_name(StrategyKind kind) noexcept {
+    switch (kind) {
+        case StrategyKind::BASIC:
+            return "basic";
+        case StrategyKind::MIMIC_DEALER:
+            return "mimic-dealer";
+        case StrategyKind::BEARISH:
+            return "bearish";
+        case StrategyKind::BULLISH:
+            return "bullish";
+    }
+    return "unknown";
+}
+
+static std::unique_ptr<PlayerStrategy> make_strategy(StrategyKind kind, bool das_allowed, bool h17) {
+    switch (kind) {
+        case StrategyKind::BASIC:
+            return std::make_unique<BasicStrategy>(das_allowed);
+        case StrategyKind::MIMIC_DEALER:
+            return std::make_unique<MimicDealerStrategy>(h17);
+        case StrategyKind::BEARISH:
+            return std::make_unique<BearishStrategy>();
+        case StrategyKind::BULLISH:
+            return std::make_unique<BullishStrategy>();
+    }
+    return nullptr;
+}
+
+static bool parse_strategy(std::string_view s, StrategyKind& out) {
+    if (s == "basic") {
+        out = StrategyKind::BASIC;
+        return true;
+    }
+    if (s == "mimic-dealer") {
+        out = StrategyKind::MIMIC_DEALER;
+        return true;
+    }
+    if (s == "bearish") {
+        out = StrategyKind::BEARISH;
+        return true;
+    }
+    if (s == "bullish") {
+        out = StrategyKind::BULLISH;
+        return true;
+    }
+    return false;
+}
 
 static void print_usage(const char* prog) {
     std::cerr << "Usage: " << prog << " [options]\n"
-              << "  --games    N   number of parallel games       (default: 1000)\n"
-              << "  --rounds   N   rounds per game                (default: 100)\n"
-              << "  --threads  N   OMP thread count               (default: max)\n"
-              << "  --min-bet  N   minimum bet in cents           (default: 100)\n"
-              << "  --max-bet  N   maximum bet in cents           (default: 10000)\n"
-              << "  --bankroll N   initial bankroll in cents      (default: 100000)\n";
+              << "  --games    N      number of parallel games     (default: 1000)\n"
+              << "  --rounds   N      rounds per game              (default: 100)\n"
+              << "  --threads  N      OMP thread count             (default: max)\n"
+              << "  --min-bet  N      minimum bet in cents         (default: 100)\n"
+              << "  --max-bet  N      maximum bet in cents         (default: 10000)\n"
+              << "  --bankroll N      initial bankroll in cents    (default: 100000)\n"
+              << "  --strategy NAME   player strategy (required to be explicit):\n"
+              << "                      basic         - textbook basic strategy (baseline)\n"
+              << "                      mimic-dealer  - play like the dealer (17 stand)\n"
+              << "                      bearish       - hit until 12, then stand\n"
+              << "                      bullish       - hit until 21\n"
+              << "                    (default: basic)\n";
 }
 
 static SimConfig parse_args(int argc, char* argv[]) {
@@ -37,6 +110,17 @@ static SimConfig parse_args(int argc, char* argv[]) {
 
     for (int i = 1; i < argc; i++) {
         std::string_view arg = argv[i];
+
+        if (arg == "--strategy" && i + 1 < argc) {
+            std::string_view name = argv[++i];
+            if (!parse_strategy(name, cfg.strategy)) {
+                std::cerr << "Unknown strategy: " << name << "\n";
+                print_usage(argv[0]);
+                std::exit(1);
+            }
+            continue;
+        }
+
         if ((arg == "--games" || arg == "--rounds" || arg == "--threads" ||
              arg == "--min-bet" || arg == "--max-bet" || arg == "--bankroll") && i + 1 < argc) {
             uint32_t val = static_cast<uint32_t>(std::atoi(argv[++i]));
@@ -57,12 +141,21 @@ static SimConfig parse_args(int argc, char* argv[]) {
     return cfg;
 }
 
+static void seat_players_with_strategy(Game& game, StrategyKind kind) {
+    bool das = game.get_ruleset().double_after_split_allowed;
+    bool h17 = game.get_ruleset().dealer_hits_soft_17;
+    for (uint8_t i = 0; i < Game::MAX_NON_DEALER_PLAYERS; i++) {
+        game.get_player(i).set_strategy(make_strategy(kind, das, h17));
+    }
+}
+
 static GameStatistics run_simulation(const SimConfig& cfg) {
     std::vector<Game> games;
     games.reserve(cfg.game_count);
     for (uint32_t g = 0; g < cfg.game_count; g++) {
         games.emplace_back(cfg.betting);
         games.back().initialize_round();
+        seat_players_with_strategy(games.back(), cfg.strategy);
     }
 
     uint64_t total_hands    = 0;
@@ -88,6 +181,7 @@ static GameStatistics run_simulation(const SimConfig& cfg) {
 }
 
 static void print_results(const SimConfig& cfg, const GameStatistics& stats, double ms) {
+    std::cout << "Strategy:          " << strategy_name(cfg.strategy) << "\n";
     std::cout << "Threads:           " << cfg.threads << "\n";
     std::cout << "Games:             " << cfg.game_count << "\n";
     std::cout << "Rounds per game:   " << cfg.rounds_per_game << "\n";

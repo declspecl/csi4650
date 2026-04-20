@@ -396,7 +396,6 @@ namespace blackjack::game {
     void Game::play_turn_for_player(uint8_t player_index, uint8_t hand_index) noexcept {
         Player& player = this->players[player_index];
         PlayerStrategy* strategy = player.get_strategy();
-        PlayerStrategy* effective = strategy ? strategy : &this->dealer_strategy;
 
         while (!this->is_hand_turn_complete(player_index, hand_index)) {
             const Card& upcard = this->dealer.get_hand(0).get_cards_data()[1];
@@ -408,7 +407,7 @@ namespace blackjack::game {
             ActionApplicationResult result = this->apply_decision(
                 player_index,
                 hand_index,
-                effective->get_decision(ctx)
+                strategy->get_decision(ctx)
             );
 
             if (result == ActionApplicationResult::APPLIED_TURN_COMPLETE) {

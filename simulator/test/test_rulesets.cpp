@@ -6,9 +6,12 @@
 #include <blackjack/hand/hand_origin.hpp>
 #include <blackjack/hand/hand_outcome.hpp>
 #include <blackjack/player/strategy/dealer.hpp>
+#include <blackjack/player/strategy/mimic_dealer.hpp>
 #include <blackjack/player/strategy/strategy.hpp>
 
 #include <gtest/gtest.h>
+
+#include <memory>
 
 using blackjack::card::Card;
 using blackjack::card::Rank;
@@ -24,11 +27,20 @@ using blackjack::player::strategy::DealerStrategy;
 using blackjack::player::strategy::Decision;
 using blackjack::player::strategy::GameContext;
 using blackjack::player::strategy::LegalActions;
+using blackjack::player::strategy::MimicDealerStrategy;
 
 namespace {
+    template <typename StrategyT>
+    void seat_all_players(Game& game) {
+        for (uint8_t i = 0; i < Game::MAX_NON_DEALER_PLAYERS; i++) {
+            game.get_player(i).set_strategy(std::make_unique<StrategyT>());
+        }
+    }
+
     Game make_game_with_rules(const Ruleset& rules) {
         Game game(BettingConfig{}, rules);
         game.initialize_round();
+        seat_all_players<MimicDealerStrategy>(game);
         return game;
     }
 
@@ -266,20 +278,16 @@ TEST(RulesetDealerTest, GameUsesDealerStrategyMatchingRuleset) {
 }
 
 TEST(RulesetEndToEndTest, SameSeedProducesDifferentDeltasAcrossRulesets) {
-    Game vegas(BettingConfig{}, Ruleset::default_vegas());
-    vegas.initialize_round();
-
-    Game tight(BettingConfig{}, Ruleset::tight_h17_no_surrender());
-    tight.initialize_round();
-
     bool found_difference = false;
     for (uint64_t seed = 1; seed <= 30 && !found_difference; seed++) {
         Game v(BettingConfig{}, Ruleset::default_vegas());
         v.initialize_round();
+        seat_all_players<MimicDealerStrategy>(v);
         v.play_round(seed);
 
         Game t(BettingConfig{}, Ruleset::tight_h17_no_surrender());
         t.initialize_round();
+        seat_all_players<MimicDealerStrategy>(t);
         t.play_round(seed);
 
         if (v.aggregate_statistics().get_bankroll_delta()

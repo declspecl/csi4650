@@ -47,6 +47,7 @@ namespace blackjack::hand {
         [[nodiscard]] inline bool is_surrendered() const noexcept;
 
         [[nodiscard]] inline uint8_t get_value() const noexcept;
+        [[nodiscard]] inline bool is_soft() const noexcept;
         [[nodiscard]] inline bool is_blackjack() const noexcept;
         [[nodiscard]] inline bool is_bust() const noexcept;
         [[nodiscard]] inline uint8_t card_count() const noexcept;
@@ -86,6 +87,25 @@ namespace blackjack::hand {
         }
 
         return value;
+    }
+
+    [[nodiscard]] inline bool Hand::is_soft() const noexcept {
+        uint8_t value = 0;
+        uint8_t aces_as_eleven = 0;
+
+        for (uint8_t i = 0; i < this->cards_in_hand; i++) {
+            value += this->cards[i].get_max_value();
+            if (this->cards[i].get_rank() == Rank::ACE) {
+                aces_as_eleven++;
+            }
+        }
+
+        while (aces_as_eleven > 0 && value > 21) {
+            value -= 10;
+            aces_as_eleven--;
+        }
+
+        return aces_as_eleven > 0;
     }
 
     [[nodiscard]] inline Card Hand::pop_card() noexcept {

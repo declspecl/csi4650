@@ -7,14 +7,14 @@ namespace blackjack::game {
     class GameStatistics {
     private:
         uint64_t hands_played;
-        uint32_t starting_bankroll_cents;
-        uint32_t ending_bankroll_cents;
+        uint64_t starting_bankroll_cents;
+        uint64_t ending_bankroll_cents;
 
     public:
         explicit GameStatistics(
             uint64_t hands_played,
-            uint32_t starting_bankroll,
-            uint32_t ending_bankroll
+            uint64_t starting_bankroll,
+            uint64_t ending_bankroll
         ) noexcept
             : hands_played(hands_played)
             , starting_bankroll_cents(starting_bankroll)
@@ -38,11 +38,11 @@ namespace blackjack::game {
                  / static_cast<double>(this->hands_played);
         }
 
-        [[nodiscard]] uint32_t get_starting_bankroll() const noexcept {
+        [[nodiscard]] uint64_t get_starting_bankroll() const noexcept {
             return this->starting_bankroll_cents;
         }
 
-        [[nodiscard]] uint32_t get_ending_bankroll() const noexcept {
+        [[nodiscard]] uint64_t get_ending_bankroll() const noexcept {
             return this->ending_bankroll_cents;
         }
     };

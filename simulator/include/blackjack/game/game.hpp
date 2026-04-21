@@ -53,7 +53,9 @@ namespace blackjack::game {
         Ruleset ruleset;
         DealerStrategy dealer_strategy;
         uint64_t hands_played_count;
-        uint32_t starting_bankroll_total;
+        uint64_t starting_bankroll_total;
+        int16_t running_count;
+        bool shoe_needs_shuffle;
 
     public:
         inline Game() noexcept;
@@ -107,6 +109,8 @@ namespace blackjack::game {
         [[nodiscard]] inline bool is_hand_turn_complete(uint8_t player_index, uint8_t hand_index) const noexcept;
         [[nodiscard]] inline bool is_dealer_turn_complete() const noexcept;
         [[nodiscard]] inline uint8_t effective_max_split_hands() const noexcept;
+        [[nodiscard]] inline float get_true_count() const noexcept;
+        [[nodiscard]] inline Card draw_and_count() noexcept;
     };
 }
 
@@ -124,6 +128,8 @@ namespace blackjack::game {
         , dealer_strategy(ruleset.dealer_hits_soft_17)
         , hands_played_count(0)
         , starting_bankroll_total(0)
+        , running_count(0)
+        , shoe_needs_shuffle(true)
     {}
 
     Game::Game(const BettingConfig& config) noexcept
@@ -138,6 +144,8 @@ namespace blackjack::game {
         , dealer_strategy(ruleset.dealer_hits_soft_17)
         , hands_played_count(0)
         , starting_bankroll_total(0)
+        , running_count(0)
+        , shoe_needs_shuffle(true)
     {}
 
     Game::Game(const BettingConfig& config, const Ruleset& rules) noexcept
@@ -152,6 +160,8 @@ namespace blackjack::game {
         , dealer_strategy(rules.dealer_hits_soft_17)
         , hands_played_count(0)
         , starting_bankroll_total(0)
+        , running_count(0)
+        , shoe_needs_shuffle(true)
     {}
 
     void Game::initialize_round() noexcept {
@@ -184,7 +194,7 @@ namespace blackjack::game {
 
         switch (decision) {
             case Decision::HIT:
-                player.add_card_to_hand(hand_index, this->shoe.draw());
+                player.add_card_to_hand(hand_index, this->draw_and_count());
                 state.action_count++;
                 return this->is_hand_turn_complete(player_index, hand_index)
                     ? ActionApplicationResult::APPLIED_TURN_COMPLETE
@@ -202,7 +212,7 @@ namespace blackjack::game {
                 uint32_t original_bet = player.get_hand(hand_index).get_bet();
                 player.deduct_from_bankroll(original_bet);
                 player.set_hand_bet(hand_index, original_bet * 2);
-                player.add_card_to_hand(hand_index, this->shoe.draw());
+                player.add_card_to_hand(hand_index, this->draw_and_count());
                 state.doubled = true;
                 state.action_count++;
                 return ActionApplicationResult::APPLIED_TURN_COMPLETE;
@@ -225,8 +235,8 @@ namespace blackjack::game {
                 player.deduct_from_bankroll(split_bet);
 
                 player.get_hand(hand_index).set_origin(HandOrigin::SPLIT);
-                player.add_card_to_hand(hand_index, this->shoe.draw());
-                player.add_card_to_hand(new_hand_index, this->shoe.draw());
+                player.add_card_to_hand(hand_index, this->draw_and_count());
+                player.add_card_to_hand(new_hand_index, this->draw_and_count());
 
                 this->player_hand_states[player_index][new_hand_index].reset();
                 state.action_count++;
@@ -355,7 +365,7 @@ namespace blackjack::game {
         return GameStatistics(
             this->hands_played_count,
             this->starting_bankroll_total,
-            static_cast<uint32_t>(total_ending)
+            total_ending
         );
     }
 
@@ -373,7 +383,7 @@ namespace blackjack::game {
     inline ActionApplicationResult Game::apply_dealer_decision(Decision decision) noexcept {
         switch (decision) {
             case Decision::HIT:
-                this->dealer.add_card_to_hand(0, this->shoe.draw());
+                this->dealer.add_card_to_hand(0, this->draw_and_count());
                 this->dealer_hand_state.action_count++;
                 return this->is_dealer_turn_complete()
                     ? ActionApplicationResult::APPLIED_TURN_COMPLETE
@@ -402,7 +412,9 @@ namespace blackjack::game {
             GameContext ctx(
                 player.get_hand(hand_index),
                 upcard,
-                this->get_legal_actions(player_index, hand_index)
+                this->get_legal_actions(player_index, hand_index),
+                this->running_count,
+                this->shoe.cards_remaining()
             );
             ActionApplicationResult result = this->apply_decision(
                 player_index,
@@ -509,8 +521,33 @@ namespace blackjack::game {
             || this->dealer_hand_state.stood;
     }
 
+    [[nodiscard]] inline float Game::get_true_count() const noexcept {
+        uint16_t remaining = this->shoe.cards_remaining();
+        if (remaining == 0) return 0.0f;
+        return static_cast<float>(this->running_count)
+             / (static_cast<float>(remaining) / 52.0f);
+    }
+
+    [[nodiscard]] inline Card Game::draw_and_count() noexcept {
+        Card card = this->shoe.draw();
+        using blackjack::card::Rank;
+        Rank rank = card.get_rank();
+        if (rank >= Rank::TEN) {
+            this->running_count--;
+        } else if (rank <= Rank::SIX) {
+            this->running_count++;
+        }
+        return card;
+    }
+
     void Game::play_round(uint64_t seed) noexcept {
-        this->shoe.shuffle(seed);
+        static constexpr uint16_t RESHUFFLE_THRESHOLD = 52;
+
+        if (this->shoe_needs_shuffle || this->shoe.cards_remaining() < RESHUFFLE_THRESHOLD) {
+            this->shoe.shuffle(seed);
+            this->running_count = 0;
+            this->shoe_needs_shuffle = false;
+        }
 
         for (uint8_t i = 0; i < this->player_count; i++) {
             this->players[i].set_active_hand_count(1);
@@ -523,8 +560,13 @@ namespace blackjack::game {
         this->dealer.clear_hand(0);
         this->dealer_hand_state.reset();
 
+        float tc = this->get_true_count();
         for (uint8_t i = 0; i < this->player_count; i++) {
-            bool bet_placed = this->players[i].place_bet(this->betting_config.get_min_bet(), this->betting_config);
+            PlayerStrategy* strategy = this->players[i].get_strategy();
+            uint32_t bet = strategy
+                ? strategy->get_bet_size(tc, this->betting_config)
+                : this->betting_config.get_min_bet();
+            bool bet_placed = this->players[i].place_bet(bet, this->betting_config);
             if (!bet_placed) {
                 this->players[i].set_active_hand_count(0);
             }
@@ -533,11 +575,11 @@ namespace blackjack::game {
         for (uint8_t deal_round = 0; deal_round < 2; deal_round++) {
             for (uint8_t i = 0; i < this->player_count; i++) {
                 if (this->players[i].get_active_hand_count() > 0) {
-                    this->players[i].add_card_to_hand(0, this->shoe.draw());
+                    this->players[i].add_card_to_hand(0, this->draw_and_count());
                 }
             }
 
-            this->dealer.add_card_to_hand(0, this->shoe.draw());
+            this->dealer.add_card_to_hand(0, this->draw_and_count());
         }
 
         for (uint8_t i = 0; i < this->player_count; i++) {

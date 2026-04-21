@@ -1,10 +1,14 @@
 #include <blackjack/game/betting_config.hpp>
 #include <blackjack/game/game.hpp>
+#include <blackjack/player/strategy/always_stand.hpp>
 #include <blackjack/player/strategy/basic.hpp>
 #include <blackjack/player/strategy/bearish.hpp>
 #include <blackjack/player/strategy/bullish.hpp>
+#include <blackjack/player/strategy/double_first.hpp>
+#include <blackjack/player/strategy/hi_lo.hpp>
 #include <blackjack/player/strategy/mimic_dealer.hpp>
 #include <blackjack/player/strategy/strategy.hpp>
+#include <blackjack/player/strategy/surrender_first.hpp>
 
 #include <chrono>
 #include <cstdlib>
@@ -17,17 +21,25 @@
 using blackjack::game::BettingConfig;
 using blackjack::game::Game;
 using blackjack::game::GameStatistics;
+using blackjack::player::strategy::AlwaysStandStrategy;
 using blackjack::player::strategy::BasicStrategy;
 using blackjack::player::strategy::BearishStrategy;
 using blackjack::player::strategy::BullishStrategy;
+using blackjack::player::strategy::DoubleFirstStrategy;
+using blackjack::player::strategy::HiLoStrategy;
 using blackjack::player::strategy::MimicDealerStrategy;
 using blackjack::player::strategy::PlayerStrategy;
+using blackjack::player::strategy::SurrenderFirstStrategy;
 
 enum class StrategyKind : uint8_t {
     BASIC,
     MIMIC_DEALER,
     BEARISH,
     BULLISH,
+    ALWAYS_STAND,
+    SURRENDER_FIRST,
+    DOUBLE_FIRST,
+    HI_LO,
 };
 
 struct SimConfig {
@@ -40,49 +52,41 @@ struct SimConfig {
 
 static std::string_view strategy_name(StrategyKind kind) noexcept {
     switch (kind) {
-        case StrategyKind::BASIC:
-            return "basic";
-        case StrategyKind::MIMIC_DEALER:
-            return "mimic-dealer";
-        case StrategyKind::BEARISH:
-            return "bearish";
-        case StrategyKind::BULLISH:
-            return "bullish";
+        case StrategyKind::BASIC:          return "basic";
+        case StrategyKind::MIMIC_DEALER:   return "mimic-dealer";
+        case StrategyKind::BEARISH:        return "bearish";
+        case StrategyKind::BULLISH:        return "bullish";
+        case StrategyKind::ALWAYS_STAND:   return "always-stand";
+        case StrategyKind::SURRENDER_FIRST: return "surrender-first";
+        case StrategyKind::DOUBLE_FIRST:   return "double-first";
+        case StrategyKind::HI_LO:          return "hi-lo";
     }
     return "unknown";
 }
 
 static std::unique_ptr<PlayerStrategy> make_strategy(StrategyKind kind, bool das_allowed, bool h17) {
     switch (kind) {
-        case StrategyKind::BASIC:
-            return std::make_unique<BasicStrategy>(das_allowed);
-        case StrategyKind::MIMIC_DEALER:
-            return std::make_unique<MimicDealerStrategy>(h17);
-        case StrategyKind::BEARISH:
-            return std::make_unique<BearishStrategy>();
-        case StrategyKind::BULLISH:
-            return std::make_unique<BullishStrategy>();
+        case StrategyKind::BASIC:           return std::make_unique<BasicStrategy>(das_allowed);
+        case StrategyKind::MIMIC_DEALER:    return std::make_unique<MimicDealerStrategy>(h17);
+        case StrategyKind::BEARISH:         return std::make_unique<BearishStrategy>();
+        case StrategyKind::BULLISH:         return std::make_unique<BullishStrategy>();
+        case StrategyKind::ALWAYS_STAND:    return std::make_unique<AlwaysStandStrategy>();
+        case StrategyKind::SURRENDER_FIRST: return std::make_unique<SurrenderFirstStrategy>(das_allowed);
+        case StrategyKind::DOUBLE_FIRST:    return std::make_unique<DoubleFirstStrategy>(das_allowed);
+        case StrategyKind::HI_LO:           return std::make_unique<HiLoStrategy>(das_allowed);
     }
     return nullptr;
 }
 
 static bool parse_strategy(std::string_view s, StrategyKind& out) {
-    if (s == "basic") {
-        out = StrategyKind::BASIC;
-        return true;
-    }
-    if (s == "mimic-dealer") {
-        out = StrategyKind::MIMIC_DEALER;
-        return true;
-    }
-    if (s == "bearish") {
-        out = StrategyKind::BEARISH;
-        return true;
-    }
-    if (s == "bullish") {
-        out = StrategyKind::BULLISH;
-        return true;
-    }
+    if (s == "basic")           { out = StrategyKind::BASIC;           return true; }
+    if (s == "mimic-dealer")    { out = StrategyKind::MIMIC_DEALER;    return true; }
+    if (s == "bearish")         { out = StrategyKind::BEARISH;         return true; }
+    if (s == "bullish")         { out = StrategyKind::BULLISH;         return true; }
+    if (s == "always-stand")    { out = StrategyKind::ALWAYS_STAND;    return true; }
+    if (s == "surrender-first") { out = StrategyKind::SURRENDER_FIRST; return true; }
+    if (s == "double-first")    { out = StrategyKind::DOUBLE_FIRST;    return true; }
+    if (s == "hi-lo")           { out = StrategyKind::HI_LO;           return true; }
     return false;
 }
 
@@ -95,10 +99,14 @@ static void print_usage(const char* prog) {
               << "  --max-bet  N      maximum bet in cents         (default: 10000)\n"
               << "  --bankroll N      initial bankroll in cents    (default: 100000)\n"
               << "  --strategy NAME   player strategy (required to be explicit):\n"
-              << "                      basic         - textbook basic strategy (baseline)\n"
-              << "                      mimic-dealer  - play like the dealer (17 stand)\n"
-              << "                      bearish       - hit until 12, then stand\n"
-              << "                      bullish       - hit until 21\n"
+              << "                      basic          - textbook basic strategy (baseline)\n"
+              << "                      mimic-dealer   - play like the dealer (17 stand)\n"
+              << "                      bearish        - hit until 12, then stand\n"
+              << "                      bullish        - hit until 21\n"
+              << "                      always-stand   - never hit (degenerate baseline)\n"
+              << "                      surrender-first- surrender whenever legal, else basic\n"
+              << "                      double-first   - double whenever legal, else basic\n"
+              << "                      hi-lo          - Hi-Lo card counting with bet spread\n"
               << "                    (default: basic)\n";
 }
 
@@ -173,11 +181,7 @@ static GameStatistics run_simulation(const SimConfig& cfg) {
         total_ending   += stats.get_ending_bankroll();
     }
 
-    return GameStatistics(
-        total_hands,
-        static_cast<uint32_t>(total_starting),
-        static_cast<uint32_t>(total_ending)
-    );
+    return GameStatistics(total_hands, total_starting, total_ending);
 }
 
 static void print_results(const SimConfig& cfg, const GameStatistics& stats, double ms) {

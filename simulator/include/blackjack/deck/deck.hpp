@@ -45,6 +45,7 @@ namespace blackjack::deck {
 
         [[nodiscard]] inline Card draw() noexcept;
         [[nodiscard]] inline bool is_empty() const noexcept;
+        [[nodiscard]] inline uint8_t get_cards_remaining() const noexcept;
         inline void shuffle(uint64_t seed) noexcept;
     };
 }
@@ -63,6 +64,10 @@ namespace blackjack::deck {
 
     bool Deck::is_empty() const noexcept {
         return this->cards_remaining == 0;
+    }
+
+    uint8_t Deck::get_cards_remaining() const noexcept {
+        return this->cards_remaining;
     }
 
     void Deck::shuffle(uint64_t seed) noexcept {

@@ -38,9 +38,17 @@ file(
     ${CMAKE_CURRENT_SOURCE_DIR}/include/blackjack/**/*.hpp
 )
 
+set(
+    SIMULATION_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/run_config.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/run_report.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/simulation.cpp
+)
+
 add_executable(
     blackjack_simulator
     ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp
+    ${SIMULATION_SOURCES}
     ${PROJECT_HEADERS}
 )
 
@@ -73,6 +81,7 @@ file(
 add_executable(
     test_runner
     ${TEST_SOURCES}
+    ${SIMULATION_SOURCES}
     ${PROJECT_HEADERS}
 )
 
@@ -83,7 +92,7 @@ target_include_directories(
 
 target_link_libraries(
     test_runner
-    PRIVATE GTest::gtest_main pthread
+    PRIVATE GTest::gtest_main pthread OpenMP::OpenMP_CXX
 )
 
 get_filename_component(_LLVM_BIN "${CMAKE_CXX_COMPILER}" DIRECTORY)

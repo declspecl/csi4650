@@ -40,14 +40,11 @@ file(
 
 set(
     SIMULATION_SOURCES
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/run_config.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/run_report.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/simulation.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp
 )
 
 add_executable(
     blackjack_simulator
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp
     ${SIMULATION_SOURCES}
     ${PROJECT_HEADERS}
 )
@@ -83,6 +80,11 @@ add_executable(
     ${TEST_SOURCES}
     ${SIMULATION_SOURCES}
     ${PROJECT_HEADERS}
+)
+
+target_compile_definitions(
+    test_runner
+    PRIVATE BLACKJACK_SIM_TESTING
 )
 
 target_include_directories(

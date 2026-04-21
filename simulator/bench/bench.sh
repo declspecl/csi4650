@@ -5,7 +5,19 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR/.."
 
 BIN="./build-release/blackjack_simulator"
-MAX_THREADS=$(nproc)
+if command -v nproc &>/dev/null; then
+    MAX_THREADS=$(nproc)
+else
+    MAX_THREADS=$(sysctl -n hw.logicalcpu 2>/dev/null || getconf _NPROCESSORS_ONLN)
+fi
+
+cpu_model() {
+    if [ -r /proc/cpuinfo ]; then
+        grep 'model name' /proc/cpuinfo | head -1 | cut -d: -f2 | xargs
+    else
+        sysctl -n machdep.cpu.brand_string 2>/dev/null || echo "unknown"
+    fi
+}
 RESULTS_DIR="bench/results"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 OUT="$RESULTS_DIR/bench_$TIMESTAMP.txt"
@@ -29,9 +41,9 @@ sep()  { printf '%s\n' "──────────────────�
 hdr()  { echo; sep; printf "  %s\n" "$1" | tee -a "$OUT"; sep; }
 log()  { printf '%s\n' "$@" | tee -a "$OUT"; }
 
-wall_1t()  { echo "$1" | grep "Wall time:"  | head -1 | awk '{print $(NF-1)}'; }
-wall_nt()  { echo "$1" | grep "Wall time:"  | tail -1 | awk '{print $(NF-1)}'; }
-ev_hand()  { echo "$1" | grep "EV per hand:" | head -1 | awk '{print $NF}'; }
+wall_1t()  { echo "$1" | grep "wall_time_ms:"  | head -1 | awk '{print $NF}'; }
+wall_nt()  { echo "$1" | grep "wall_time_ms:"  | tail -1 | awk '{print $NF}'; }
+ev_hand()  { echo "$1" | grep "ev_per_hand:" | head -1 | awk '{print $NF}'; }
 
 mkdir -p "$RESULTS_DIR"
 : > "$OUT"
@@ -39,7 +51,7 @@ mkdir -p "$RESULTS_DIR"
 log "Blackjack Simulator Benchmark Suite"
 log "Date:    $(date)"
 log "Host:    $(hostname)"
-log "CPU:     $(grep 'model name' /proc/cpuinfo | head -1 | cut -d: -f2 | xargs)"
+log "CPU:     $(cpu_model)"
 log "Cores:   $MAX_THREADS"
 log "Binary:  $BIN"
 log ""
@@ -124,9 +136,10 @@ log "Strategy           1T (ms)   ${MAX_THREADS}T (ms)   Speedup"
 log "─────────────────  ───────   ──────────   ───────"
 
 for s in always-stand bearish mimic-dealer bullish double-first surrender-first basic hi-lo; do
+    raw1=$("$BIN" --games "$GAMES_STRONG" --rounds "$ROUNDS" --threads 1 --strategy "$s" 2>/dev/null)
     rawN=$("$BIN" --games "$GAMES_STRONG" --rounds "$ROUNDS" --threads "$MAX_THREADS" --strategy "$s" 2>/dev/null)
-    ms1=$(wall_1t "$rawN")
-    msN=$(wall_nt "$rawN")
+    ms1=$(wall_1t "$raw1")
+    msN=$(wall_1t "$rawN")
     spd=$(awk "BEGIN {printf \"%.3f\", $ms1 / $msN}")
     printf "%-18s %-9s %-12s %s\n" "$s" "$ms1" "$msN" "$spd" | tee -a "$OUT"
 done
@@ -154,29 +167,40 @@ fi
 
 if $DO_FLAMEGRAPH; then
     hdr "6. Flamegraph"
-    FG_DIR=""
-    for d in /tmp/FlameGraph ~/FlameGraph; do
-        [ -f "$d/flamegraph.pl" ] && FG_DIR="$d" && break
-    done
-    if [ -z "$FG_DIR" ]; then
-        log "Cloning FlameGraph to /tmp/FlameGraph..."
-        git clone --depth 1 https://github.com/brendangregg/FlameGraph /tmp/FlameGraph
-        FG_DIR="/tmp/FlameGraph"
+    if command -v samply &>/dev/null; then
+        PROFILE="$RESULTS_DIR/samply_$TIMESTAMP.json.gz"
+        log "Recording with samply..."
+        samply record --save-only -o "$PROFILE" \
+            "$BIN" --games "$GAMES_STRONG" --rounds "$ROUNDS" --threads "$MAX_THREADS" --strategy basic
+        log "Profile saved: $PROFILE"
+        log "View with: samply load $PROFILE"
+    elif command -v perf &>/dev/null; then
+        FG_DIR=""
+        for d in /tmp/FlameGraph ~/FlameGraph; do
+            [ -f "$d/flamegraph.pl" ] && FG_DIR="$d" && break
+        done
+        if [ -z "$FG_DIR" ]; then
+            log "Cloning FlameGraph to /tmp/FlameGraph..."
+            git clone --depth 1 https://github.com/brendangregg/FlameGraph /tmp/FlameGraph
+            FG_DIR="/tmp/FlameGraph"
+        fi
+
+        SVG="$RESULTS_DIR/flamegraph_$TIMESTAMP.svg"
+        PROFDATA="$RESULTS_DIR/perf_$TIMESTAMP.data"
+
+        log "Recording perf data..."
+        perf record -g --call-graph fp -o "$PROFDATA" \
+            "$BIN" --games "$GAMES_STRONG" --rounds "$ROUNDS" --threads "$MAX_THREADS" --strategy basic \
+            2>/dev/null
+
+        perf script -i "$PROFDATA" 2>/dev/null \
+            | "$FG_DIR/stackcollapse-perf.pl" \
+            | "$FG_DIR/flamegraph.pl" > "$SVG"
+
+        log "Flamegraph saved: $SVG  (open in a browser)"
+    else
+        log "[SKIP] neither samply nor perf found (install: brew install samply)"
     fi
-
-    SVG="$RESULTS_DIR/flamegraph_$TIMESTAMP.svg"
-    PROFDATA="$RESULTS_DIR/perf_$TIMESTAMP.data"
-
-    log "Recording perf data..."
-    perf record -g --call-graph fp -o "$PROFDATA" \
-        "$BIN" --games "$GAMES_STRONG" --rounds "$ROUNDS" --threads "$MAX_THREADS" --strategy basic \
-        2>/dev/null
-
-    perf script -i "$PROFDATA" 2>/dev/null \
-        | "$FG_DIR/stackcollapse-perf.pl" \
-        | "$FG_DIR/flamegraph.pl" > "$SVG"
-
-    log "Flamegraph saved: $SVG  (open in a browser)"
 fi
 
 hdr "Done"
